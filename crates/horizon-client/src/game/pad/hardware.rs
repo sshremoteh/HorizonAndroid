@@ -1,6 +1,7 @@
 //! The real controllers (the `controllers` feature): gilrs' pads, and the DualSense's own output
 //! over HID: its rumble, adaptive triggers, lights and HD haptics. A build without the feature (the
 //! server build) has the stub in pad.rs instead, and only `horizon-ctl pad`'s virtual pad.
+#![allow(dead_code, unused_imports)]
 use super::{
     super::{Game, Screen},
     Pads,
@@ -82,73 +83,80 @@ impl Pads {
 
     /// Drain gilrs' events and read the active pad (opening gilrs the first time).
     pub(super) fn read(&mut self) -> PadState {
-        self.start();
-        let Some(gilrs) = self.devices.gilrs.as_mut() else {
-            return PadState::default();
-        };
-        while let Some(gilrs::Event { id, event, .. }) = gilrs.next_event() {
-            use gilrs::EventType as E;
-            match event {
-                E::Connected => {
-                    log::info!("Controller connected: {}", gilrs.gamepad(id).name());
-                    if let Some(output) = &self.devices.output {
-                        output.scan();
-                    }
-                }
-                E::Disconnected => {
-                    log::info!("Controller disconnected: {}", gilrs.gamepad(id).name());
-                    if self.devices.active == Some(id) {
-                        self.devices.active = None;
-                    }
-                    if let Some(output) = &self.devices.output {
-                        output.scan();
-                    }
-                }
-                E::ButtonPressed(..) => self.devices.active = Some(id),
-                E::AxisChanged(_, value, _) | E::ButtonChanged(_, value, _)
-                    if value.abs() > 0.5 =>
-                {
-                    self.devices.active = Some(id)
-                }
-                _ => {}
-            }
+        #[cfg(target_os = "android")]
+        {
+            horizon_client::android_gamepad::current_state()
         }
-        let Some(pad) = self
-            .devices
-            .active
-            .and_then(|id| gilrs.connected_gamepad(id))
-        else {
-            // Before any pad is touched (the virtual pad playing), a DualSense still shows it.
-            self.devices.dualsense = gilrs.gamepads().any(|(_, pad)| is_dualsense(&pad));
-            return PadState::default();
-        };
-        self.style = GlyphStyle::of_vendor(pad.vendor_id());
-        self.devices.dualsense = is_dualsense(&pad);
-        let mut state = PadState::default();
-        for button in Button::ALL {
-            if !matches!(button, Button::LeftTrigger | Button::RightTrigger) {
-                state.set(button, pad.is_pressed(gilrs_button(button)));
+        #[cfg(not(target_os = "android"))]
+        {
+            self.start();
+            let Some(gilrs) = self.devices.gilrs.as_mut() else {
+                return PadState::default();
+            };
+            while let Some(gilrs::Event { id, event, .. }) = gilrs.next_event() {
+                use gilrs::EventType as E;
+                match event {
+                    E::Connected => {
+                        log::info!("Controller connected: {}", gilrs.gamepad(id).name());
+                        if let Some(output) = &self.devices.output {
+                            output.scan();
+                        }
+                    }
+                    E::Disconnected => {
+                        log::info!("Controller disconnected: {}", gilrs.gamepad(id).name());
+                        if self.devices.active == Some(id) {
+                            self.devices.active = None;
+                        }
+                        if let Some(output) = &self.devices.output {
+                            output.scan();
+                        }
+                    }
+                    E::ButtonPressed(..) => self.devices.active = Some(id),
+                    E::AxisChanged(_, value, _) | E::ButtonChanged(_, value, _)
+                        if value.abs() > 0.5 =>
+                    {
+                        self.devices.active = Some(id)
+                    }
+                    _ => {}
+                }
             }
+            let Some(pad) = self
+                .devices
+                .active
+                .and_then(|id| gilrs.connected_gamepad(id))
+            else {
+                // Before any pad is touched (the virtual pad playing), a DualSense still shows it.
+                self.devices.dualsense = gilrs.gamepads().any(|(_, pad)| is_dualsense(&pad));
+                return PadState::default();
+            };
+            self.style = GlyphStyle::of_vendor(pad.vendor_id());
+            self.devices.dualsense = is_dualsense(&pad);
+            let mut state = PadState::default();
+            for button in Button::ALL {
+                if !matches!(button, Button::LeftTrigger | Button::RightTrigger) {
+                    state.set(button, pad.is_pressed(gilrs_button(button)));
+                }
+            }
+            let axis = |a| pad.value(a);
+            use gilrs::Axis as A;
+            state.left = [axis(A::LeftStickX), axis(A::LeftStickY)];
+            state.right = [axis(A::RightStickX), axis(A::RightStickY)];
+            // Triggers arrive as analog buttons on most mappings, as plain
+            // buttons on some.
+            let trigger = |b: gilrs::Button| {
+                let value = pad.button_data(b).map_or(0.0, |d| d.value());
+                if pad.is_pressed(b) {
+                    value.max(1.0)
+                } else {
+                    value
+                }
+            };
+            state.triggers = [
+                trigger(gilrs::Button::LeftTrigger2),
+                trigger(gilrs::Button::RightTrigger2),
+            ];
+            state
         }
-        let axis = |a| pad.value(a);
-        use gilrs::Axis as A;
-        state.left = [axis(A::LeftStickX), axis(A::LeftStickY)];
-        state.right = [axis(A::RightStickX), axis(A::RightStickY)];
-        // Triggers arrive as analog buttons on most mappings, as plain
-        // buttons on some.
-        let trigger = |b: gilrs::Button| {
-            let value = pad.button_data(b).map_or(0.0, |d| d.value());
-            if pad.is_pressed(b) {
-                value.max(1.0)
-            } else {
-                value
-            }
-        };
-        state.triggers = [
-            trigger(gilrs::Button::LeftTrigger2),
-            trigger(gilrs::Button::RightTrigger2),
-        ];
-        state
     }
 }
 

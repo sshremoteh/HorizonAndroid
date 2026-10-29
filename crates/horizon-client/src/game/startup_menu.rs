@@ -448,6 +448,47 @@ impl Loading {
             }
         }
         match event {
+            WindowEvent::Touch(touch) => {
+                match touch.phase {
+                    winit::event::TouchPhase::Started => {
+                        self.menu.pointer = (touch.location.x, touch.location.y);
+                        self.update_menu_cursor();
+                        self.menu_event(
+                            event_loop,
+                            WindowEvent::MouseInput {
+                                device_id: touch.device_id,
+                                state: ElementState::Pressed,
+                                button: MouseButton::Left,
+                            },
+                        )?;
+                    }
+                    winit::event::TouchPhase::Moved => {
+                        self.menu.pointer = (touch.location.x, touch.location.y);
+                        self.update_menu_cursor();
+                        if self.menu.options_open && self.menu.dragging {
+                            self.menu_options_click(true, false);
+                        } else if let Some(title) = &mut self.menu.title {
+                            let size = self
+                                .renderer
+                                .as_ref()
+                                .map_or([1280, 720], |r| [r.config.width, r.config.height]);
+                            let b = HudBatch::new(size);
+                            title.drag(self.menu.cursor, (b.width, b.height));
+                            title.drag_field(&self.gui.as_ref().unwrap().atlas, self.menu.cursor.0);
+                        }
+                    }
+                    winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
+                        self.menu_event(
+                            event_loop,
+                            WindowEvent::MouseInput {
+                                device_id: touch.device_id,
+                                state: ElementState::Released,
+                                button: MouseButton::Left,
+                            },
+                        )?;
+                    }
+                }
+            }
             WindowEvent::CloseRequested => {
                 self.save_menu_settings();
                 event_loop.exit();

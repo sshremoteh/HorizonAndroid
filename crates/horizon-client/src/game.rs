@@ -5720,10 +5720,17 @@ impl Game<'_> {
             // so everywhere else warp after grabbing.
             #[cfg(target_os = "macos")]
             warp(window);
-            self.captured = window
-                .set_cursor_grab(CursorGrabMode::Locked)
-                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined))
-                .is_ok();
+            #[cfg(target_os = "android")]
+            {
+                self.captured = true;
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                self.captured = window
+                    .set_cursor_grab(CursorGrabMode::Locked)
+                    .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined))
+                    .is_ok();
+            }
             #[cfg(not(target_os = "macos"))]
             if self.captured && self.focused {
                 warp(window);
@@ -12566,6 +12573,222 @@ impl Game<'_> {
             }
         }
     }
+    fn handle_touch_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+        touch: winit::event::Touch,
+    ) -> Result<()> {
+        let size = self
+            .renderer
+            .as_ref()
+            .map(|r| [r.config.width as f32, r.config.height as f32])
+            .unwrap_or([1920.0, 1080.0]);
+        let width = size[0];
+        let height = size[1];
+        let (x, y) = (touch.location.x as f32, touch.location.y as f32);
+
+        // 1. If we are in ANY screen or menu (Title, Inventory, Pause, Chest, Options, etc.):
+        if self.screen != Screen::Playing || self.title.is_some() {
+            match touch.phase {
+                winit::event::TouchPhase::Started => {
+                    self.cursor = (x, y);
+                    self.window_event(
+                        event_loop,
+                        id,
+                        WindowEvent::CursorMoved {
+                            device_id: touch.device_id,
+                            position: touch.location,
+                        },
+                    );
+                    self.window_event(
+                        event_loop,
+                        id,
+                        WindowEvent::MouseInput {
+                            device_id: touch.device_id,
+                            state: ElementState::Pressed,
+                            button: MouseButton::Left,
+                        },
+                    );
+                }
+                winit::event::TouchPhase::Moved => {
+                    self.cursor = (x, y);
+                    self.window_event(
+                        event_loop,
+                        id,
+                        WindowEvent::CursorMoved {
+                            device_id: touch.device_id,
+                            position: touch.location,
+                        },
+                    );
+                }
+                winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
+                    self.window_event(
+                        event_loop,
+                        id,
+                        WindowEvent::MouseInput {
+                            device_id: touch.device_id,
+                            state: ElementState::Released,
+                            button: MouseButton::Left,
+                        },
+                    );
+                }
+            }
+            return Ok(());
+        }
+
+        // 2. We are in 3D Gameplay (Screen::Playing)
+        if !self.captured {
+            self.capture(true);
+        }
+
+        // Top-right (x > width - 120.0, y < 100.0): Pause Menu (Escape)
+        if x > width - 120.0 && y < 100.0 {
+            if touch.phase == winit::event::TouchPhase::Ended {
+                self.key_pressed(KeyCode::Escape)?;
+            }
+            return Ok(());
+        }
+
+        // Top-left (x < 120.0, y < 100.0): Inventory (E)
+        if x < 120.0 && y < 100.0 {
+            if touch.phase == winit::event::TouchPhase::Ended {
+                self.mapped_key(KeyCode::KeyE, true, false)?;
+                self.mapped_key(KeyCode::KeyE, false, false)?;
+            }
+            return Ok(());
+        }
+
+        // Bottom center: Hotbar (y > height - 120.0, x between 25% and 75% width)
+        if y > height - 120.0 && x >= width * 0.25 && x <= width * 0.75 {
+            if matches!(touch.phase, winit::event::TouchPhase::Started | winit::event::TouchPhase::Moved) {
+                let slot = (((x - width * 0.25) / (width * 0.50)) * 9.0).clamp(0.0, 8.0) as usize;
+                self.selected = slot;
+            }
+            return Ok(());
+        }
+
+        // Bottom right Jump button (x > width - 180.0, y > height - 200.0)
+        if x > width - 180.0 && y > height - 200.0 {
+            match touch.phase {
+                winit::event::TouchPhase::Started => {
+                    self.mapped_key(KeyCode::Space, true, false)?;
+                }
+                winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
+                    self.mapped_key(KeyCode::Space, false, false)?;
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        // Sneak button (above jump: x > width - 180.0, y between height - 340.0 and height - 200.0)
+        if x > width - 180.0 && y > height - 340.0 && y <= height - 200.0 {
+            if touch.phase == winit::event::TouchPhase::Ended {
+                let sneaking = self.keys.contains(&KeyCode::ShiftLeft);
+                self.mapped_key(KeyCode::ShiftLeft, !sneaking, false)?;
+            }
+            return Ok(());
+        }
+
+        // Left half (x < width * 0.45): Virtual Joystick for Movement (W, A, S, D)
+        static JOYSTICK_TOUCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+        static JOYSTICK_ORIGIN: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((0.0, 0.0));
+
+        if x < width * 0.45 || JOYSTICK_TOUCH.load(std::sync::atomic::Ordering::Relaxed) == touch.id {
+            match touch.phase {
+                winit::event::TouchPhase::Started => {
+                    JOYSTICK_TOUCH.store(touch.id, std::sync::atomic::Ordering::Relaxed);
+                    *JOYSTICK_ORIGIN.lock().unwrap() = (x, y);
+                }
+                winit::event::TouchPhase::Moved => {
+                    if JOYSTICK_TOUCH.load(std::sync::atomic::Ordering::Relaxed) == touch.id {
+                        let origin = *JOYSTICK_ORIGIN.lock().unwrap();
+                        let dx = x - origin.0;
+                        let dy = y - origin.1;
+                        const DEADZONE: f32 = 18.0;
+
+                        // Forward / Back
+                        if dy < -DEADZONE {
+                            self.mapped_key(KeyCode::KeyW, true, false)?;
+                        } else {
+                            self.mapped_key(KeyCode::KeyW, false, false)?;
+                        }
+                        if dy > DEADZONE {
+                            self.mapped_key(KeyCode::KeyS, true, false)?;
+                        } else {
+                            self.mapped_key(KeyCode::KeyS, false, false)?;
+                        }
+
+                        // Left / Right
+                        if dx < -DEADZONE {
+                            self.mapped_key(KeyCode::KeyA, true, false)?;
+                        } else {
+                            self.mapped_key(KeyCode::KeyA, false, false)?;
+                        }
+                        if dx > DEADZONE {
+                            self.mapped_key(KeyCode::KeyD, true, false)?;
+                        } else {
+                            self.mapped_key(KeyCode::KeyD, false, false)?;
+                        }
+                    }
+                }
+                winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
+                    if JOYSTICK_TOUCH.load(std::sync::atomic::Ordering::Relaxed) == touch.id {
+                        JOYSTICK_TOUCH.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+                        self.mapped_key(KeyCode::KeyW, false, false)?;
+                        self.mapped_key(KeyCode::KeyS, false, false)?;
+                        self.mapped_key(KeyCode::KeyA, false, false)?;
+                        self.mapped_key(KeyCode::KeyD, false, false)?;
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        // Right half (x >= width * 0.45): Camera Look and Tap to Hit / Place
+        static LOOK_TOUCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+        static LOOK_PREV: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((0.0, 0.0));
+        static LOOK_START: std::sync::Mutex<Option<((f32, f32), Instant)>> = std::sync::Mutex::new(None);
+
+        match touch.phase {
+            winit::event::TouchPhase::Started => {
+                LOOK_TOUCH.store(touch.id, std::sync::atomic::Ordering::Relaxed);
+                *LOOK_PREV.lock().unwrap() = (x, y);
+                *LOOK_START.lock().unwrap() = Some(((x, y), Instant::now()));
+            }
+            winit::event::TouchPhase::Moved => {
+                if LOOK_TOUCH.load(std::sync::atomic::Ordering::Relaxed) == touch.id {
+                    let mut prev = LOOK_PREV.lock().unwrap();
+                    let dx = x - prev.0;
+                    let dy = y - prev.1;
+                    *prev = (x, y);
+                    self.mouse.on_move(0.0, 0.0, dx as f64 * 1.5, dy as f64 * 1.5, true, true);
+                }
+            }
+            winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
+                if LOOK_TOUCH.load(std::sync::atomic::Ordering::Relaxed) == touch.id {
+                    LOOK_TOUCH.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+                    if let Some((start_pos, start_time)) = LOOK_START.lock().unwrap().take() {
+                        let dist = (x - start_pos.0).hypot(y - start_pos.1);
+                        if dist < 20.0 {
+                            if start_time.elapsed() < Duration::from_millis(300) {
+                                // Quick tap = attack / mine
+                                self.play_mouse(MouseButton::Left, true)?;
+                                self.play_mouse(MouseButton::Left, false)?;
+                            } else {
+                                // Long tap / hold = use / place
+                                self.play_mouse(MouseButton::Right, true)?;
+                                self.play_mouse(MouseButton::Right, false)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 impl ApplicationHandler for Game<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -12667,6 +12890,7 @@ impl ApplicationHandler for Game<'_> {
                 | WindowEvent::MouseInput { .. }
                 | WindowEvent::MouseWheel { .. }
                 | WindowEvent::CursorMoved { .. }
+                | WindowEvent::Touch { .. }
         ) {
             self.last_input = Instant::now();
         }
@@ -13303,9 +13527,18 @@ impl ApplicationHandler for Game<'_> {
                         }
                     }
                 }
+                WindowEvent::Touch(touch) => {
+                    self.handle_touch_event(event_loop, id, touch)?;
+                }
                 WindowEvent::KeyboardInput { event, .. } => {
-                    let PhysicalKey::Code(key) = event.physical_key else {
-                        return Ok(());
+                    let key = match event.physical_key {
+                        PhysicalKey::Code(key) => key,
+                        #[cfg(target_os = "android")]
+                        PhysicalKey::Unidentified(winit::keyboard::NativeKeyCode::Android(code)) => {
+                            horizon_client::android_gamepad::on_key(code as i32, event.state == ElementState::Pressed);
+                            return Ok(());
+                        }
+                        _ => return Ok(()),
                     };
                     self.mod_key(key, event.state == ElementState::Pressed, event.repeat);
                     // key.smoothCamera toggles the cinematic camera.

@@ -29,7 +29,7 @@ cp "${REPO_ROOT}/target/${TARGET}/${PROFILE}/libhorizon_client.so" "${BUILD_DIR}
 
 # 4. Compile Java Activity and create classes.dex
 echo "-> Compiling Java Activity classes..."
-javac -encoding UTF-8 -cp "${ANDROID_JAR}" \
+javac --release 17 -encoding UTF-8 -cp "${ANDROID_JAR}" \
     -d "${BUILD_DIR}/java_bin" \
     "${SCRIPT_DIR}"/java/dev/playhorizon/horizon/*.java
 

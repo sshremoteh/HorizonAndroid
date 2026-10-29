@@ -221,6 +221,8 @@ pub use horizon_items::random_sequences;
 
 #[cfg(target_os = "android")]
 pub mod android_app;
+#[cfg(target_os = "android")]
+pub mod android_gamepad;
 
 #[cfg(target_os = "android")]
 #[allow(unsafe_code)]
