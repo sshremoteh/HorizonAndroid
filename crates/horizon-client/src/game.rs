@@ -12955,10 +12955,18 @@ impl Game<'_> {
 
                     if btn.key == "edit" {
                         // Handled on release
+                    } else if btn.key == "kbd" {
+                        if self.pad.menu.osk.is_some() {
+                            self.pad.menu.osk = None;
+                        } else {
+                            self.pad.menu.osk = Some(horizon_client::osk::Keyboard::default());
+                        }
                     } else if btn.key == "lmb" {
                         self.left = true;
                     } else if btn.key == "rmb" {
                         self.right = true;
+                    } else if btn.key == "mmb" {
+                        self.play_mouse(winit::event::MouseButton::Middle, true)?;
                     } else if btn.toggle {
                         // Toggle handled on release
                     } else if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
@@ -12980,10 +12988,14 @@ impl Game<'_> {
                     if btn.key == "edit" {
                         self.touch_overlay.is_editing = true;
                         return Ok(());
+                    } else if btn.key == "kbd" {
+                        return Ok(());
                     } else if btn.key == "lmb" {
                         self.left = false;
                     } else if btn.key == "rmb" {
                         self.right = false;
+                    } else if btn.key == "mmb" {
+                        self.play_mouse(winit::event::MouseButton::Middle, false)?;
                     } else if btn.toggle {
                         if self.touch_overlay.active_toggles.contains(&btn.id) {
                             self.touch_overlay.active_toggles.remove(&btn.id);
@@ -13017,6 +13029,8 @@ impl Game<'_> {
                         self.left = false;
                     } else if btn.key == "rmb" {
                         self.right = false;
+                    } else if btn.key == "mmb" {
+                        let _ = self.play_mouse(winit::event::MouseButton::Middle, false);
                     } else if !btn.toggle {
                         if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
                             self.mapped_key(code, false, false)?;
