@@ -8,9 +8,9 @@
 //! and as report 0x31 over Bluetooth, where a sequence tag leads it and a CRC-32 (seeded with
 //! the byte 0xA2) closes it.
 pub mod device;
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub mod haptics;
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 #[path = "haptics_stub.rs"]
 pub mod haptics;
 pub mod trigger;

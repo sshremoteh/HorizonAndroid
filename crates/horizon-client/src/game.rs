@@ -342,16 +342,41 @@ impl Options {
         })
     }
     fn read() -> Result<Option<Self>> {
-        let sibling = std::env::current_exe()?
-            .parent()
-            .ok_or("missing executable directory")?
-            .join("resources");
-        let mut o = Self {
-            resources: if sibling.join("horizon-resources.json").exists() {
+        #[cfg(not(target_os = "android"))]
+        let resources_path = {
+            let sibling = std::env::current_exe()?
+                .parent()
+                .ok_or("missing executable directory")?
+                .join("resources");
+            if sibling.join("horizon-resources.json").exists() {
                 sibling
             } else {
                 std::path::Path::new(".local/horizon-client").join(horizon_core::VANILLA_VERSION)
-            },
+            }
+        };
+
+        #[cfg(target_os = "android")]
+        let resources_path = {
+            let external = std::path::PathBuf::from("/sdcard/horizon/resources");
+            let app_external = std::path::PathBuf::from("/sdcard/Android/data/dev.playhorizon.horizon/files/resources");
+            let ext_from_app = horizon_client::android_app::external_data_path().map(|p| p.join("resources"));
+            let int_from_app = horizon_client::android_app::internal_data_path().map(|p| p.join("resources"));
+
+            if external.join("horizon-resources.json").exists() {
+                external
+            } else if app_external.join("horizon-resources.json").exists() {
+                app_external
+            } else if let Some(ref ext) = ext_from_app.filter(|p| p.join("horizon-resources.json").exists()) {
+                ext.clone()
+            } else if let Some(ref internal) = int_from_app.filter(|p| p.join("horizon-resources.json").exists()) {
+                internal.clone()
+            } else {
+                external
+            }
+        };
+
+        let mut o = Self {
+            resources: resources_path,
             distance: 12,
             distance_override: None,
             seed: 0,
@@ -14940,8 +14965,22 @@ fn write_report(game: &Game<'_>) -> Result<()> {
     Ok(())
 }
 
+fn create_event_loop() -> Result<EventLoop<()>> {
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(EventLoop::new()?)
+    }
+    #[cfg(target_os = "android")]
+    {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        let app = horizon_client::android_app::get_app()
+            .ok_or_else(|| "AndroidApp context not initialized")?;
+        Ok(EventLoop::builder().with_android_app(app).build()?)
+    }
+}
+
 fn run_event_loop(mut game: Game<'_>) -> Result<()> {
-    EventLoop::new()?.run_app(&mut game)?;
+    create_event_loop()?.run_app(&mut game)?;
     horizon_client::discord_presence::stop();
     write_report(&game)?;
     if let Some(e) = game.error.take() {
@@ -15298,7 +15337,7 @@ fn run_loading(
         error: None,
     };
     let mut app = App::Loading(Box::new(loading));
-    EventLoop::new()?.run_app(&mut app)?;
+    create_event_loop()?.run_app(&mut app)?;
     horizon_client::discord_presence::stop();
     match app {
         App::Ready(mut game) => {

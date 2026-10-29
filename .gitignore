@@ -34,3 +34,10 @@
 
 # Release-only compiled original exporter bundle.
 /exporters/
+
+# Android packaging artifacts
+/packaging/android/build/
+*.apk
+*.idsig
+*.dex
+/android-libs/

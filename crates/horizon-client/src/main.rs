@@ -1,8 +1,7 @@
 //! Horizon: native Rust client for Minecraft Java Edition 26.3 gameplay.
 #![forbid(unsafe_code)]
-mod game;
 
-use horizon_client::{crash, logging};
+use horizon_client::{crash, game, logging};
 
 /// The mod API level this game serves, kept in the program for the launcher
 /// to read without running it (`horizon_mods::api_level::MARK`). `main`

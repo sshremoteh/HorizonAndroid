@@ -1370,6 +1370,7 @@ name = "horizon-client"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "android-activity",
  "bytemuck",
  "chrono",
  "cpal",

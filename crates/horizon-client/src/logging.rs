@@ -298,6 +298,17 @@ impl log::Log for Logger {
             None => "unnamed",
         };
         let stderr = ours(record.target()).then(|| message.clone());
+        #[cfg(target_os = "android")]
+        {
+            let prio = match record.level() {
+                log::Level::Error => 6,
+                log::Level::Warn => 5,
+                log::Level::Info => 4,
+                log::Level::Debug => 3,
+                log::Level::Trace => 2,
+            };
+            crate::log_android(prio, &format!("[{thread}] {message}"));
+        }
         self.send(thread, record.level(), &message, stderr);
     }
 

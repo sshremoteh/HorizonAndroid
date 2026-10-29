@@ -1,6 +1,10 @@
 //! Horizon native client: resources, world streaming, rendering and the
 //! bindings between the validated simulation pieces and the game loop.
-#![forbid(unsafe_code)]
+#![cfg_attr(not(target_os = "android"), forbid(unsafe_code))]
+#![cfg_attr(target_os = "android", deny(unsafe_code))]
+
+extern crate self as horizon_client;
+
 pub mod advancements;
 pub mod ambience;
 pub mod animate_tick;
@@ -70,6 +74,7 @@ pub mod fog;
 pub mod font;
 pub mod friends_screen;
 pub mod furnace;
+pub mod game;
 pub mod game_mode_switcher;
 pub mod game_rules_screen;
 pub mod gfx;
@@ -213,3 +218,95 @@ pub use horizon_items::enchant;
 pub use horizon_items::item_data;
 pub use horizon_items::items;
 pub use horizon_items::random_sequences;
+
+#[cfg(target_os = "android")]
+pub mod android_app;
+
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+unsafe extern "C" {
+    fn __android_log_print(
+        prio: std::ffi::c_int,
+        tag: *const std::ffi::c_char,
+        fmt: *const std::ffi::c_char,
+        ...
+    ) -> std::ffi::c_int;
+}
+
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+pub fn log_android(prio: i32, msg: &str) {
+    let tag = std::ffi::CString::new("Horizon").unwrap_or_default();
+    let fmt = std::ffi::CString::new("%s").unwrap_or_default();
+    let text = std::ffi::CString::new(msg).unwrap_or_default();
+    unsafe {
+        __android_log_print(prio, tag.as_ptr(), fmt.as_ptr(), text.as_ptr());
+    }
+}
+
+#[cfg(target_os = "android")]
+pub fn write_crash_report(msg: &str) {
+    log_android(6, msg);
+    let mut targets = Vec::new();
+    if let Some(ext) = android_app::external_data_path() {
+        let _ = std::fs::create_dir_all(&ext);
+        targets.push(ext.join("crash.txt"));
+    }
+    if let Some(int) = android_app::internal_data_path() {
+        let _ = std::fs::create_dir_all(&int);
+        targets.push(int.join("crash.txt"));
+    }
+    targets.push(std::path::PathBuf::from("/sdcard/horizon/crash.txt"));
+    targets.push(std::path::PathBuf::from("/sdcard/horizon-crash.txt"));
+
+    for path in targets {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, msg);
+    }
+}
+
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
+    android_app::set_app(app);
+
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::capture();
+        let crash_msg = format!("CRITICAL PANIC in Horizon Android:\n{}\nBacktrace:\n{}\n", info, backtrace);
+        write_crash_report(&crash_msg);
+    }));
+
+    // Find the primary working directory (must be writable)
+    let app_ext = android_app::external_data_path();
+    let sdcard_home = std::path::PathBuf::from("/sdcard/horizon");
+    let home = if let Some(ref ext) = app_ext {
+        let _ = std::fs::create_dir_all(ext);
+        ext.clone()
+    } else if std::fs::create_dir_all(&sdcard_home).is_ok() {
+        sdcard_home
+    } else {
+        android_app::internal_data_path()
+            .unwrap_or_else(|| std::path::PathBuf::from("/data/local/tmp"))
+    };
+
+    let _ = std::fs::create_dir_all(&home);
+    let _ = std::env::set_current_dir(&home);
+    logging::init(&home, "Render thread");
+
+    let startup_msg = format!(
+        "Horizon Android starting up from android_main. Home: {}, Internal: {:?}, External: {:?}",
+        home.display(),
+        android_app::internal_data_path(),
+        android_app::external_data_path()
+    );
+    log_android(4, &startup_msg);
+    log::info!("{}", startup_msg);
+
+    if let Err(e) = game::run() {
+        let err_msg = format!("Horizon Android Game Error:\n{}\n", e);
+        write_crash_report(&err_msg);
+    }
+}
