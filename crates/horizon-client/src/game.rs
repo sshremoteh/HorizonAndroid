@@ -1703,6 +1703,7 @@ struct Game<'a> {
     world_root: PathBuf,
     /// The world is superflat (`ServerLevel.isFlat`, for every dimension).
     world_flat: bool,
+    touch_overlay: horizon_client::touch_controls::TouchOverlayState,
     /// A player carried through a portal, re-placed once the destination loads.
     travelling: Option<(PlayerMotion, Vec3)>,
     /// A server's players on their way to another level, each waiting for
@@ -6240,56 +6241,125 @@ impl Game<'_> {
         #[cfg(target_os = "android")]
         {
             let atlas = &self.gui.atlas;
+            let gw = batch.width;
+            let gh = batch.height;
             let opacity = std::env::var("HORIZON_TOUCH_OPACITY")
                 .ok()
                 .and_then(|v| v.parse::<u8>().ok())
-                .unwrap_or(160);
+                .unwrap_or(self.touch_overlay.layout.opacity);
 
             let bg = horizon_client::hud::rgba(24, 24, 28, opacity);
             let border = horizon_client::hud::rgba(255, 255, 255, (opacity / 2).max(40));
             let text_color = 0xFFFFFFFF;
 
-            let draw_btn = |batch: &mut horizon_client::hud::HudBatch, x: f32, y: f32, w: f32, h: f32, label: &str, active: bool| {
-                let current_bg = if active {
+            // 1. Draw Buttons
+            for (i, btn) in self.touch_overlay.layout.buttons.iter().enumerate() {
+                let (bx, by, bw, bh) = self.touch_overlay.layout.button_rect(btn, gw, gh);
+                let is_selected = self.touch_overlay.is_editing && self.touch_overlay.selected_index == Some(i);
+
+                let is_active = if btn.toggle {
+                    self.touch_overlay.active_toggles.contains(&btn.id)
+                } else if btn.key == "lmb" {
+                    self.left
+                } else if btn.key == "rmb" {
+                    self.right
+                } else if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
+                    self.keys.contains(&code)
+                } else {
+                    false
+                };
+
+                let current_bg = if is_selected {
+                    horizon_client::hud::rgba(14, 116, 144, 210)
+                } else if is_active {
                     horizon_client::hud::rgba(74, 222, 128, opacity.max(180))
                 } else {
                     bg
                 };
-                batch.fill(atlas, x + 1.0, y + 1.0, w - 2.0, h - 2.0, current_bg);
-                batch.fill(atlas, x, y, w, 1.0, border);
-                batch.fill(atlas, x, y + h - 1.0, w, 1.0, border);
-                batch.fill(atlas, x, y, 1.0, h, border);
-                batch.fill(atlas, x + w - 1.0, y, 1.0, h, border);
-                let tw = horizon_client::hud::HudBatch::text_width(atlas, label);
-                let tx = x + (w - tw) / 2.0;
-                let ty = y + (h - 8.0) / 2.0;
-                batch.text(atlas, label, tx, ty, text_color, true);
-            };
 
-            // 1. Pause Button [||] in Top Right
-            draw_btn(batch, batch.width - 34.0, 6.0, 28.0, 22.0, "||", false);
+                let current_border = if is_selected {
+                    0xFF00E5FF
+                } else {
+                    border
+                };
 
-            // 2. Inventory Button [INV] in Top Left
-            draw_btn(batch, 6.0, 6.0, 32.0, 22.0, "INV", false);
+                batch.fill(atlas, bx + 1.0, by + 1.0, bw - 2.0, bh - 2.0, current_bg);
+                batch.fill(atlas, bx, by, bw, 1.0, current_border);
+                batch.fill(atlas, bx, by + bh - 1.0, bw, 1.0, current_border);
+                batch.fill(atlas, bx, by, 1.0, bh, current_border);
+                batch.fill(atlas, bx + bw - 1.0, by, 1.0, bh, current_border);
 
-            // 3. Jump Button [JUMP] in Bottom Right
-            let jumping = self.keys.contains(&KeyCode::Space);
-            draw_btn(batch, batch.width - 46.0, batch.height - 48.0, 40.0, 36.0, "JUMP", jumping);
+                let tw = horizon_client::hud::HudBatch::text_width(atlas, &btn.label);
+                let tx = bx + (bw - tw) / 2.0;
+                let ty = by + (bh - 8.0) / 2.0;
+                batch.text(atlas, &btn.label, tx, ty, text_color, true);
+            }
 
-            // 4. Sneak Button [SNK] above Jump
-            let sneaking = self.keys.contains(&KeyCode::ShiftLeft);
-            draw_btn(batch, batch.width - 46.0, batch.height - 90.0, 40.0, 36.0, "SNK", sneaking);
+            // 2. Draw Editor Overlay if editing is ON
+            if self.touch_overlay.is_editing {
+                batch.fill(atlas, 0.0, 0.0, gw, 36.0, horizon_client::hud::rgba(15, 15, 18, 240));
+                batch.fill(atlas, 0.0, 35.0, gw, 1.0, 0xFF00E5FF);
 
-            // 5. Movement D-Pad guide indicator in Bottom Left
-            let jx = 42.0;
-            let jy = batch.height - 52.0;
-            let guide_color = horizon_client::hud::rgba(255, 255, 255, (opacity / 4).max(25));
-            batch.fill(atlas, jx - 14.0, jy - 1.0, 28.0, 2.0, guide_color);
-            batch.fill(atlas, jx - 1.0, jy - 14.0, 2.0, 28.0, guide_color);
-            batch.text(atlas, "^", jx - 2.0, jy - 22.0, text_color, true);
-            batch.text(atlas, "v", jx - 2.0, jy + 14.0, text_color, true);
-            batch.text(atlas, "<", jx - 22.0, jy - 4.0, text_color, true);
-            batch.text(atlas, ">", jx + 16.0, jy - 4.0, text_color, true);
+                let draw_tool = |batch: &mut horizon_client::hud::HudBatch, x: f32, label: &str, w: f32, color: u32| {
+                    batch.fill(atlas, x, 4.0, w, 28.0, color);
+                    let tw = horizon_client::hud::HudBatch::text_width(atlas, label);
+                    let tx = x + (w - tw) / 2.0;
+                    batch.text(atlas, label, tx, 14.0, 0xFFFFFFFF, true);
+                };
+
+                draw_tool(batch, 4.0, "+ Кнопка", 64.0, horizon_client::hud::rgba(37, 99, 235, 230));
+                draw_tool(batch, 72.0, "+ Разм", 52.0, horizon_client::hud::rgba(55, 65, 81, 230));
+                draw_tool(batch, 128.0, "- Разм", 52.0, horizon_client::hud::rgba(55, 65, 81, 230));
+                draw_tool(batch, 184.0, "Клавиша", 58.0, horizon_client::hud::rgba(13, 148, 136, 230));
+                draw_tool(batch, 246.0, "Удалить", 54.0, horizon_client::hud::rgba(220, 38, 38, 230));
+                draw_tool(batch, 304.0, "Сброс", 48.0, horizon_client::hud::rgba(75, 85, 99, 230));
+                draw_tool(batch, gw - 72.0, "Готово", 68.0, horizon_client::hud::rgba(22, 163, 74, 240));
+
+                if let Some(idx) = self.touch_overlay.selected_index {
+                    if let Some(btn) = self.touch_overlay.layout.buttons.get(idx) {
+                        let info = format!("Выбрано: {} [{}] (Перетаскивайте пальцем)", btn.label, btn.key);
+                        batch.text(atlas, &info, 6.0, 42.0, 0xFF00E5FF, true);
+                    }
+                } else {
+                    batch.text(atlas, "Нажмите на кнопку чтобы выбрать, или перетащите ее", 6.0, 42.0, 0xFFE2E8F0, true);
+                }
+
+                // 3. Draw Key Picker Modal Dialog if open
+                if self.touch_overlay.key_picker_open {
+                    batch.fill(atlas, 0.0, 0.0, gw, gh, horizon_client::hud::rgba(0, 0, 0, 180));
+
+                    let dw = 320.0f32.min(gw - 20.0);
+                    let dh = 210.0f32.min(gh - 20.0);
+                    let dx = (gw - dw) / 2.0;
+                    let dy = (gh - dh) / 2.0;
+
+                    batch.fill(atlas, dx, dy, dw, dh, horizon_client::hud::rgba(24, 24, 28, 250));
+                    batch.fill(atlas, dx, dy, dw, 1.0, 0xFF00E5FF);
+                    batch.fill(atlas, dx, dy + dh - 1.0, dw, 1.0, 0xFF00E5FF);
+                    batch.fill(atlas, dx, dy, 1.0, dh, 0xFF00E5FF);
+                    batch.fill(atlas, dx + dw - 1.0, dy, 1.0, dh, 0xFF00E5FF);
+
+                    batch.text(atlas, "Выберите клавишу для кнопки:", dx + 12.0, dy + 10.0, 0xFFFFFFFF, true);
+                    batch.fill(atlas, dx + dw - 26.0, dy + 6.0, 20.0, 20.0, horizon_client::hud::rgba(239, 68, 68, 220));
+                    batch.text(atlas, "X", dx + dw - 20.0, dy + 12.0, 0xFFFFFFFF, true);
+
+                    let cols = 6;
+                    let kw = (dw - 24.0) / (cols as f32);
+                    let kh = 22.0;
+
+                    for (i, (_key_id, key_name)) in horizon_client::touch_controls::AVAILABLE_KEYS.iter().enumerate() {
+                        let c = (i % cols) as f32;
+                        let r = (i / cols) as f32;
+                        let kx = dx + 12.0 + c * kw;
+                        let ky = dy + 34.0 + r * (kh + 4.0);
+
+                        batch.fill(atlas, kx + 1.0, ky + 1.0, kw - 2.0, kh - 2.0, horizon_client::hud::rgba(40, 44, 52, 220));
+                        let tw = horizon_client::hud::HudBatch::text_width(atlas, key_name);
+                        let tx = kx + (kw - tw) / 2.0;
+                        batch.text(atlas, key_name, tx, ky + 7.0, 0xFFE2E8F0, true);
+                    }
+                }
+            }
         }
     }
     fn creative_inventory_open(&self) -> bool {
@@ -12722,107 +12792,247 @@ impl Game<'_> {
             self.capture(true);
         }
 
-        // Top-right: Pause Menu (Escape / ||)
-        if gx >= gw - 40.0 && gy <= 34.0 {
-            if touch.phase == winit::event::TouchPhase::Ended {
-                self.key_pressed(KeyCode::Escape)?;
+        // 3. Editor mode handling
+        if self.touch_overlay.is_editing {
+            match touch.phase {
+                winit::event::TouchPhase::Started => {
+                    // Check Key Picker modal first if open
+                    if self.touch_overlay.key_picker_open {
+                        let dw = 320.0f32.min(gw - 20.0);
+                        let dh = 210.0f32.min(gh - 20.0);
+                        let dx = (gw - dw) / 2.0;
+                        let dy = (gh - dh) / 2.0;
+
+                        // Check Close [X]
+                        if gx >= dx + dw - 28.0 && gx <= dx + dw - 4.0 && gy >= dy + 4.0 && gy <= dy + 28.0 {
+                            self.touch_overlay.key_picker_open = false;
+                            return Ok(());
+                        }
+
+                        // Check grid items
+                        let cols = 6;
+                        let kw = (dw - 24.0) / (cols as f32);
+                        let kh = 22.0;
+
+                        for (i, (key_id, key_name)) in horizon_client::touch_controls::AVAILABLE_KEYS.iter().enumerate() {
+                            let c = (i % cols) as f32;
+                            let r = (i / cols) as f32;
+                            let kx = dx + 12.0 + c * kw;
+                            let ky = dy + 34.0 + r * (kh + 4.0);
+
+                            if gx >= kx && gx <= kx + kw && gy >= ky && gy <= ky + kh {
+                                if let Some(sel) = self.touch_overlay.selected_index {
+                                    if let Some(btn) = self.touch_overlay.layout.buttons.get_mut(sel) {
+                                        btn.key = (*key_id).to_string();
+                                        btn.label = (*key_name).to_string();
+                                        let _ = self.touch_overlay.layout.save();
+                                    }
+                                }
+                                self.touch_overlay.key_picker_open = false;
+                                return Ok(());
+                            }
+                        }
+                        return Ok(());
+                    }
+
+                    // Check top toolbar (gy <= 36.0)
+                    if gy <= 36.0 {
+                        // [+ Кнопка] (4..68)
+                        if gx >= 4.0 && gx <= 68.0 {
+                            let new_id = format!("btn_{}", self.touch_overlay.layout.buttons.len() + 1);
+                            let new_btn = horizon_client::touch_controls::TouchButton {
+                                id: new_id,
+                                label: "KEY".into(),
+                                key: "space".into(),
+                                x: 0.5,
+                                y: 0.5,
+                                w: 0.14,
+                                h: 0.14,
+                                toggle: false,
+                            };
+                            self.touch_overlay.layout.buttons.push(new_btn);
+                            self.touch_overlay.selected_index = Some(self.touch_overlay.layout.buttons.len() - 1);
+                            let _ = self.touch_overlay.layout.save();
+                            return Ok(());
+                        }
+                        // [+ Разм] (72..124)
+                        if gx >= 72.0 && gx <= 124.0 {
+                            if let Some(sel) = self.touch_overlay.selected_index {
+                                if let Some(btn) = self.touch_overlay.layout.buttons.get_mut(sel) {
+                                    btn.w = (btn.w + 0.02).min(0.35);
+                                    btn.h = (btn.h + 0.02).min(0.35);
+                                    let _ = self.touch_overlay.layout.save();
+                                }
+                            }
+                            return Ok(());
+                        }
+                        // [- Разм] (128..180)
+                        if gx >= 128.0 && gx <= 180.0 {
+                            if let Some(sel) = self.touch_overlay.selected_index {
+                                if let Some(btn) = self.touch_overlay.layout.buttons.get_mut(sel) {
+                                    btn.w = (btn.w - 0.02).max(0.06);
+                                    btn.h = (btn.h - 0.02).max(0.06);
+                                    let _ = self.touch_overlay.layout.save();
+                                }
+                            }
+                            return Ok(());
+                        }
+                        // [Клавиша] (184..242)
+                        if gx >= 184.0 && gx <= 242.0 {
+                            if self.touch_overlay.selected_index.is_some() {
+                                self.touch_overlay.key_picker_open = true;
+                            }
+                            return Ok(());
+                        }
+                        // [Удалить] (246..300)
+                        if gx >= 246.0 && gx <= 300.0 {
+                            if let Some(sel) = self.touch_overlay.selected_index {
+                                if sel < self.touch_overlay.layout.buttons.len() {
+                                    self.touch_overlay.layout.buttons.remove(sel);
+                                    self.touch_overlay.selected_index = None;
+                                    let _ = self.touch_overlay.layout.save();
+                                }
+                            }
+                            return Ok(());
+                        }
+                        // [Сброс] (304..352)
+                        if gx >= 304.0 && gx <= 352.0 {
+                            self.touch_overlay.layout = horizon_client::touch_controls::TouchLayout::default();
+                            self.touch_overlay.selected_index = None;
+                            let _ = self.touch_overlay.layout.save();
+                            return Ok(());
+                        }
+                        // [Готово] (gw - 72.0..gw)
+                        if gx >= gw - 72.0 {
+                            self.touch_overlay.is_editing = false;
+                            self.touch_overlay.selected_index = None;
+                            let _ = self.touch_overlay.layout.save();
+                            return Ok(());
+                        }
+                        return Ok(());
+                    }
+
+                    // Click on a button to select and begin drag
+                    if let Some(idx) = self.touch_overlay.layout.find_button(gx, gy, gw, gh) {
+                        self.touch_overlay.selected_index = Some(idx);
+                        self.touch_overlay.dragging_index = Some(idx);
+                        self.touch_overlay.drag_start_pointer = (raw_x, raw_y);
+                        let btn = &self.touch_overlay.layout.buttons[idx];
+                        self.touch_overlay.drag_orig_pos = (btn.x, btn.y);
+                    } else {
+                        self.touch_overlay.selected_index = None;
+                    }
+                }
+                winit::event::TouchPhase::Moved => {
+                    if let Some(idx) = self.touch_overlay.dragging_index {
+                        if let Some(btn) = self.touch_overlay.layout.buttons.get_mut(idx) {
+                            let (start_px, start_py) = self.touch_overlay.drag_start_pointer;
+                            let (orig_x, orig_y) = self.touch_overlay.drag_orig_pos;
+                            let dx = (raw_x - start_px) / width;
+                            let dy = (raw_y - start_py) / height;
+                            btn.x = (orig_x + dx).clamp(0.04, 0.96);
+                            btn.y = (orig_y + dy).clamp(0.04, 0.96);
+                        }
+                    }
+                }
+                winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
+                    if self.touch_overlay.dragging_index.is_some() {
+                        self.touch_overlay.dragging_index = None;
+                        let _ = self.touch_overlay.layout.save();
+                    }
+                }
             }
             return Ok(());
         }
 
-        // Top-left: Inventory (E / INV)
-        if gx <= 44.0 && gy <= 34.0 {
-            if touch.phase == winit::event::TouchPhase::Ended {
-                self.mapped_key(KeyCode::KeyE, true, false)?;
-                self.mapped_key(KeyCode::KeyE, false, false)?;
+        // 4. Normal Gameplay: check if touch hits any custom touch button
+        if let Some(idx) = self.touch_overlay.layout.find_button(gx, gy, gw, gh) {
+            let btn = self.touch_overlay.layout.buttons[idx].clone();
+
+            match touch.phase {
+                winit::event::TouchPhase::Started => {
+                    self.touch_overlay.active_touches.insert(touch.id, btn.id.clone());
+
+                    if btn.key == "edit" {
+                        // Handled on release
+                    } else if btn.key == "lmb" {
+                        self.left = true;
+                    } else if btn.key == "rmb" {
+                        self.right = true;
+                    } else if btn.toggle {
+                        // Toggle handled on release
+                    } else if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
+                        match code {
+                            KeyCode::Escape => self.key_pressed(KeyCode::Escape)?,
+                            KeyCode::KeyE => {
+                                self.mapped_key(KeyCode::KeyE, true, false)?;
+                                self.mapped_key(KeyCode::KeyE, false, false)?;
+                            }
+                            KeyCode::F5 => self.cycle_camera(),
+                            _ => self.mapped_key(code, true, false)?,
+                        }
+                    }
+                    return Ok(());
+                }
+                winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
+                    self.touch_overlay.active_touches.remove(&touch.id);
+
+                    if btn.key == "edit" {
+                        self.touch_overlay.is_editing = true;
+                        return Ok(());
+                    } else if btn.key == "lmb" {
+                        self.left = false;
+                    } else if btn.key == "rmb" {
+                        self.right = false;
+                    } else if btn.toggle {
+                        if self.touch_overlay.active_toggles.contains(&btn.id) {
+                            self.touch_overlay.active_toggles.remove(&btn.id);
+                            if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
+                                self.mapped_key(code, false, false)?;
+                            }
+                        } else {
+                            self.touch_overlay.active_toggles.insert(btn.id.clone());
+                            if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
+                                self.mapped_key(code, true, false)?;
+                            }
+                        }
+                    } else if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
+                        if code != KeyCode::Escape && code != KeyCode::KeyE && code != KeyCode::F5 {
+                            self.mapped_key(code, false, false)?;
+                        }
+                    }
+                    return Ok(());
+                }
+                winit::event::TouchPhase::Moved => {
+                    return Ok(());
+                }
             }
-            return Ok(());
         }
 
-        // Bottom center: Hotbar (gy >= gh - 26.0)
+        // Release any held button if pointer slid away
+        if matches!(touch.phase, winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled) {
+            if let Some(btn_id) = self.touch_overlay.active_touches.remove(&touch.id) {
+                if let Some(btn) = self.touch_overlay.layout.buttons.iter().find(|b| b.id == btn_id) {
+                    if btn.key == "lmb" {
+                        self.left = false;
+                    } else if btn.key == "rmb" {
+                        self.right = false;
+                    } else if !btn.toggle {
+                        if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
+                            self.mapped_key(code, false, false)?;
+                        }
+                    }
+                }
+                return Ok(());
+            }
+        }
+
+        // 5. Hotbar slot selection (center bottom)
         let hotbar_left = (gw - 182.0) / 2.0;
         if gy >= gh - 26.0 && gx >= hotbar_left && gx <= hotbar_left + 182.0 {
             if matches!(touch.phase, winit::event::TouchPhase::Started | winit::event::TouchPhase::Moved) {
                 let slot = (((gx - hotbar_left) / 182.0) * 9.0).clamp(0.0, 8.0) as usize;
                 self.selected = slot;
-            }
-            return Ok(());
-        }
-
-        // Bottom right: Jump button [JUMP]
-        if gx >= gw - 52.0 && gy >= gh - 54.0 {
-            match touch.phase {
-                winit::event::TouchPhase::Started => {
-                    self.mapped_key(KeyCode::Space, true, false)?;
-                }
-                winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
-                    self.mapped_key(KeyCode::Space, false, false)?;
-                }
-                _ => {}
-            }
-            return Ok(());
-        }
-
-        // Above Jump: Sneak button [SNK]
-        if gx >= gw - 52.0 && gy >= gh - 96.0 && gy < gh - 54.0 {
-            if touch.phase == winit::event::TouchPhase::Ended {
-                let sneaking = self.keys.contains(&KeyCode::ShiftLeft);
-                self.mapped_key(KeyCode::ShiftLeft, !sneaking, false)?;
-            }
-            return Ok(());
-        }
-
-        // Left half (x < width * 0.45): Virtual Joystick for Movement (W, A, S, D)
-        static JOYSTICK_TOUCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
-        static JOYSTICK_ORIGIN: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((0.0, 0.0));
-
-        if x < width * 0.45 || JOYSTICK_TOUCH.load(std::sync::atomic::Ordering::Relaxed) == touch.id {
-            match touch.phase {
-                winit::event::TouchPhase::Started => {
-                    JOYSTICK_TOUCH.store(touch.id, std::sync::atomic::Ordering::Relaxed);
-                    *JOYSTICK_ORIGIN.lock().unwrap() = (x, y);
-                }
-                winit::event::TouchPhase::Moved => {
-                    if JOYSTICK_TOUCH.load(std::sync::atomic::Ordering::Relaxed) == touch.id {
-                        let origin = *JOYSTICK_ORIGIN.lock().unwrap();
-                        let dx = x - origin.0;
-                        let dy = y - origin.1;
-                        const DEADZONE: f32 = 18.0;
-
-                        // Forward / Back
-                        if dy < -DEADZONE {
-                            self.mapped_key(KeyCode::KeyW, true, false)?;
-                        } else {
-                            self.mapped_key(KeyCode::KeyW, false, false)?;
-                        }
-                        if dy > DEADZONE {
-                            self.mapped_key(KeyCode::KeyS, true, false)?;
-                        } else {
-                            self.mapped_key(KeyCode::KeyS, false, false)?;
-                        }
-
-                        // Left / Right
-                        if dx < -DEADZONE {
-                            self.mapped_key(KeyCode::KeyA, true, false)?;
-                        } else {
-                            self.mapped_key(KeyCode::KeyA, false, false)?;
-                        }
-                        if dx > DEADZONE {
-                            self.mapped_key(KeyCode::KeyD, true, false)?;
-                        } else {
-                            self.mapped_key(KeyCode::KeyD, false, false)?;
-                        }
-                    }
-                }
-                winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
-                    if JOYSTICK_TOUCH.load(std::sync::atomic::Ordering::Relaxed) == touch.id {
-                        JOYSTICK_TOUCH.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
-                        self.mapped_key(KeyCode::KeyW, false, false)?;
-                        self.mapped_key(KeyCode::KeyS, false, false)?;
-                        self.mapped_key(KeyCode::KeyA, false, false)?;
-                        self.mapped_key(KeyCode::KeyD, false, false)?;
-                    }
-                }
             }
             return Ok(());
         }
@@ -14171,6 +14381,7 @@ impl<'a> Game<'a> {
             dim: Dim::Overworld,
             world_root: PathBuf::new(),
             world_flat: false,
+            touch_overlay: horizon_client::touch_controls::TouchOverlayState::new(),
             travelling: None,
             server_trips: Vec::new(),
             level_teleports: Vec::new(),
