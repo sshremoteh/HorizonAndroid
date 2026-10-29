@@ -14,6 +14,12 @@ pub fn current_state() -> PadState {
     *STATE.lock().unwrap()
 }
 
+/// Called when a stick event arrives from motion or touch translation.
+pub fn on_stick(lx: f32, ly: f32) {
+    let mut state = STATE.lock().unwrap();
+    state.left = [lx, -ly];
+}
+
 /// Called when an Android key code event arrives from a gamepad or joystick.
 pub fn on_key(key_code: i32, pressed: bool) {
     let mut state = STATE.lock().unwrap();
@@ -39,14 +45,18 @@ pub fn on_axis(lx: f32, ly: f32, rx: f32, ry: f32, lt: f32, rt: f32, hat_x: f32,
 
 fn map_key_code(code: i32) -> Option<Button> {
     match code {
-        // A / Cross
+        // A / Cross (Xbox A)
         96 => Some(Button::South),
-        // B / Circle
+        // B / Circle (Xbox B)
         97 => Some(Button::East),
-        // X / Square
+        // C
+        98 => Some(Button::West),
+        // X / Square (Xbox X)
         99 => Some(Button::West),
-        // Y / Triangle
+        // Y / Triangle (Xbox Y)
         100 => Some(Button::North),
+        // Z
+        101 => Some(Button::North),
         // L1 / LB
         102 => Some(Button::LeftBumper),
         // R1 / RB
@@ -61,13 +71,20 @@ fn map_key_code(code: i32) -> Option<Button> {
         107 => Some(Button::RightStick),
         // Start / Menu
         108 => Some(Button::Start),
-        // Select / Back
+        // Select / Back / View
         109 => Some(Button::Select),
+        // Mode (Xbox guide button)
+        110 => Some(Button::Start),
         // Dpad keys
         19 => Some(Button::DPadUp),
         20 => Some(Button::DPadDown),
         21 => Some(Button::DPadLeft),
         22 => Some(Button::DPadRight),
+        23 => Some(Button::South),
+        // Android Back button as B or Select
+        4 => Some(Button::East),
+        // Menu button as Start
+        82 => Some(Button::Start),
         _ => None,
     }
 }

@@ -85,7 +85,11 @@ impl Pads {
     pub(super) fn read(&mut self) -> PadState {
         #[cfg(target_os = "android")]
         {
-            horizon_client::android_gamepad::current_state()
+            let state = horizon_client::android_gamepad::current_state();
+            if state != PadState::default() {
+                self.style = GlyphStyle::Xbox;
+            }
+            state
         }
         #[cfg(not(target_os = "android"))]
         {

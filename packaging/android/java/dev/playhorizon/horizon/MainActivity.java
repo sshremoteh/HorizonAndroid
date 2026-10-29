@@ -5,6 +5,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -17,6 +18,9 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -31,6 +35,7 @@ public class MainActivity extends Activity {
 
     private LinearLayout mContentLayout;
     private String mLastCrashText = null;
+    private EditText mNameInput;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -93,7 +98,7 @@ public class MainActivity extends Activity {
         subtitle.setText("Нативный порт игрового движка Horizon для Android (ARM64 / Vulkan 1.1+)");
         subtitle.setTextSize(13);
         subtitle.setTextColor(Color.parseColor("#A1A1AA"));
-        subtitle.setPadding(0, 0, 0, 28);
+        subtitle.setPadding(0, 0, 0, 24);
         mContentLayout.addView(subtitle);
 
         // 2. Storage Permission Status
@@ -185,7 +190,128 @@ public class MainActivity extends Activity {
             mContentLayout.addView(crashCard);
         }
 
-        // 5. Actions / Launch Buttons
+        // 5. Settings Card (Настройки Horizon Launcher)
+        final SharedPreferences prefs = getSharedPreferences("horizon_launcher_prefs", MODE_PRIVATE);
+        LinearLayout settingsCard = createCard("#1E222D");
+
+        TextView settingsTitle = new TextView(this);
+        settingsTitle.setText("⚙️ Настройки Horizon Launcher");
+        settingsTitle.setTextSize(16);
+        settingsTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        settingsTitle.setTextColor(Color.parseColor("#E0E6ED"));
+        settingsCard.addView(settingsTitle);
+
+        // Player Name
+        TextView nameLabel = new TextView(this);
+        nameLabel.setText("Имя игрока (ник):");
+        nameLabel.setTextSize(12);
+        nameLabel.setTextColor(Color.parseColor("#A1A1AA"));
+        nameLabel.setPadding(0, 16, 0, 6);
+        settingsCard.addView(nameLabel);
+
+        mNameInput = new EditText(this);
+        mNameInput.setText(prefs.getString("player_name", "Player"));
+        mNameInput.setTextColor(Color.WHITE);
+        mNameInput.setTextSize(14);
+        mNameInput.setBackgroundColor(Color.parseColor("#121214"));
+        mNameInput.setPadding(24, 16, 24, 16);
+        settingsCard.addView(mNameInput);
+
+        // Render Distance
+        TextView distLabel = new TextView(this);
+        distLabel.setText("Дистанция прорисовки (чанки):");
+        distLabel.setTextSize(12);
+        distLabel.setTextColor(Color.parseColor("#A1A1AA"));
+        distLabel.setPadding(0, 16, 0, 6);
+        settingsCard.addView(distLabel);
+
+        final int currentDist = prefs.getInt("render_distance", 6);
+        final int[] distances = new int[] { 4, 6, 8, 10, 12 };
+        final Button[] distBtns = new Button[distances.length];
+        LinearLayout distBar = new LinearLayout(this);
+        distBar.setOrientation(LinearLayout.HORIZONTAL);
+
+        for (int i = 0; i < distances.length; i++) {
+            final int d = distances[i];
+            final int idx = i;
+            Button b = new Button(this);
+            b.setText(d + " ч.");
+            b.setTextSize(12);
+            b.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            boolean sel = (d == currentDist);
+            b.setBackgroundColor(Color.parseColor(sel ? "#3B82F6" : "#2A2E3D"));
+            b.setTextColor(Color.WHITE);
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    prefs.edit().putInt("render_distance", d).apply();
+                    for (int j = 0; j < distances.length; j++) {
+                        distBtns[j].setBackgroundColor(Color.parseColor(j == idx ? "#3B82F6" : "#2A2E3D"));
+                    }
+                }
+            });
+            distBtns[i] = b;
+            distBar.addView(b);
+        }
+        settingsCard.addView(distBar);
+
+        // In-Frame toggle (Single thread)
+        final CheckBox inFrameCheck = new CheckBox(this);
+        inFrameCheck.setText("Режим одного потока (--in-frame)\n(Экономит RAM на устройствах с 3-4 ГБ)");
+        inFrameCheck.setTextColor(Color.parseColor("#E4E4E7"));
+        inFrameCheck.setTextSize(12);
+        inFrameCheck.setChecked(prefs.getBoolean("in_frame", false));
+        inFrameCheck.setPadding(0, 16, 0, 8);
+        inFrameCheck.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                prefs.edit().putBoolean("in_frame", isChecked).apply();
+            }
+        });
+        settingsCard.addView(inFrameCheck);
+
+        // Touch buttons opacity
+        TextView opLabel = new TextView(this);
+        opLabel.setText("Прозрачность сенсорных кнопок:");
+        opLabel.setTextSize(12);
+        opLabel.setTextColor(Color.parseColor("#A1A1AA"));
+        opLabel.setPadding(0, 12, 0, 6);
+        settingsCard.addView(opLabel);
+
+        final int currentOp = prefs.getInt("touch_opacity", 75);
+        final int[] opacities = new int[] { 40, 75, 100 };
+        final String[] opLabels = new String[] { "40%", "75%", "100%" };
+        final Button[] opBtns = new Button[opacities.length];
+        LinearLayout opBar = new LinearLayout(this);
+        opBar.setOrientation(LinearLayout.HORIZONTAL);
+
+        for (int i = 0; i < opacities.length; i++) {
+            final int op = opacities[i];
+            final int idx = i;
+            Button b = new Button(this);
+            b.setText(opLabels[i]);
+            b.setTextSize(12);
+            b.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            boolean sel = (op == currentOp);
+            b.setBackgroundColor(Color.parseColor(sel ? "#3B82F6" : "#2A2E3D"));
+            b.setTextColor(Color.WHITE);
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    prefs.edit().putInt("touch_opacity", op).apply();
+                    for (int j = 0; j < opacities.length; j++) {
+                        opBtns[j].setBackgroundColor(Color.parseColor(j == idx ? "#3B82F6" : "#2A2E3D"));
+                    }
+                }
+            });
+            opBtns[i] = b;
+            opBar.addView(b);
+        }
+        settingsCard.addView(opBar);
+
+        mContentLayout.addView(settingsCard);
+
+        // 6. Actions / Launch Buttons
         LinearLayout btnBar = new LinearLayout(this);
         btnBar.setOrientation(LinearLayout.HORIZONTAL);
         btnBar.setPadding(0, 24, 0, 0);
@@ -204,7 +330,7 @@ public class MainActivity extends Activity {
         spacer.setLayoutParams(new LinearLayout.LayoutParams(24, 1));
         btnBar.addView(spacer);
 
-        Button refreshBtn = createButton("🔄 Проверить снова", "#3F3F46", Color.WHITE);
+        Button refreshBtn = createButton("🔄 Обновить", "#3F3F46", Color.WHITE);
         refreshBtn.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         refreshBtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -301,8 +427,26 @@ public class MainActivity extends Activity {
     }
 
     private void launchGame() {
-        Log.i(TAG, "Launching HorizonGameActivity...");
+        Log.i(TAG, "Launching HorizonGameActivity with configured settings...");
+        SharedPreferences prefs = getSharedPreferences("horizon_launcher_prefs", MODE_PRIVATE);
+        String name = prefs.getString("player_name", "Player");
+        if (mNameInput != null && mNameInput.getText() != null) {
+            String entered = mNameInput.getText().toString().trim();
+            if (!entered.isEmpty()) {
+                name = entered;
+                prefs.edit().putString("player_name", name).apply();
+            }
+        }
+        int dist = prefs.getInt("render_distance", 6);
+        boolean inFrame = prefs.getBoolean("in_frame", false);
+        int op = prefs.getInt("touch_opacity", 75);
+        int alpha255 = (int) (op * 2.55f);
+
         Intent intent = new Intent(this, HorizonGameActivity.class);
+        intent.putExtra("HORIZON_PLAYER_NAME", name);
+        intent.putExtra("HORIZON_RENDER_DISTANCE", String.valueOf(dist));
+        intent.putExtra("HORIZON_SERVER_THREAD", inFrame ? "0" : "1");
+        intent.putExtra("HORIZON_TOUCH_OPACITY", String.valueOf(alpha255));
         startActivity(intent);
     }
 }

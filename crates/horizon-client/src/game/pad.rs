@@ -167,7 +167,14 @@ impl Game<'_> {
     /// Input from the pad counts while the window has focus, or always for
     /// the virtual pad (a script can't focus the window).
     fn pad_focused(&self) -> bool {
-        self.focused || self.pad.virtual_input
+        #[cfg(target_os = "android")]
+        {
+            true
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            self.focused || self.pad.virtual_input
+        }
     }
 
     fn pad_button(

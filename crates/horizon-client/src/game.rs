@@ -377,7 +377,10 @@ impl Options {
 
         let mut o = Self {
             resources: resources_path,
-            distance: 12,
+            distance: std::env::var("HORIZON_RENDER_DISTANCE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(8),
             distance_override: None,
             seed: 0,
             creative: false,
@@ -6228,7 +6231,66 @@ impl Game<'_> {
             self.draw_sign_editor(&mut batch);
             self.draw_book(&mut batch);
         }
+        if self.screen == Screen::Playing && self.title.is_none() && show_hud {
+            self.draw_touch_controls(&mut batch);
+        }
         batch
+    }
+    fn draw_touch_controls(&self, batch: &mut horizon_client::hud::HudBatch) {
+        #[cfg(target_os = "android")]
+        {
+            let atlas = &self.gui.atlas;
+            let opacity = std::env::var("HORIZON_TOUCH_OPACITY")
+                .ok()
+                .and_then(|v| v.parse::<u8>().ok())
+                .unwrap_or(160);
+
+            let bg = horizon_client::hud::rgba(24, 24, 28, opacity);
+            let border = horizon_client::hud::rgba(255, 255, 255, (opacity / 2).max(40));
+            let text_color = 0xFFFFFFFF;
+
+            let draw_btn = |batch: &mut horizon_client::hud::HudBatch, x: f32, y: f32, w: f32, h: f32, label: &str, active: bool| {
+                let current_bg = if active {
+                    horizon_client::hud::rgba(74, 222, 128, opacity.max(180))
+                } else {
+                    bg
+                };
+                batch.fill(atlas, x + 1.0, y + 1.0, w - 2.0, h - 2.0, current_bg);
+                batch.fill(atlas, x, y, w, 1.0, border);
+                batch.fill(atlas, x, y + h - 1.0, w, 1.0, border);
+                batch.fill(atlas, x, y, 1.0, h, border);
+                batch.fill(atlas, x + w - 1.0, y, 1.0, h, border);
+                let tw = horizon_client::hud::HudBatch::text_width(atlas, label);
+                let tx = x + (w - tw) / 2.0;
+                let ty = y + (h - 8.0) / 2.0;
+                batch.text(atlas, label, tx, ty, text_color, true);
+            };
+
+            // 1. Pause Button [||] in Top Right
+            draw_btn(batch, batch.width - 34.0, 6.0, 28.0, 22.0, "||", false);
+
+            // 2. Inventory Button [INV] in Top Left
+            draw_btn(batch, 6.0, 6.0, 32.0, 22.0, "INV", false);
+
+            // 3. Jump Button [JUMP] in Bottom Right
+            let jumping = self.keys.contains(&KeyCode::Space);
+            draw_btn(batch, batch.width - 46.0, batch.height - 48.0, 40.0, 36.0, "JUMP", jumping);
+
+            // 4. Sneak Button [SNK] above Jump
+            let sneaking = self.keys.contains(&KeyCode::ShiftLeft);
+            draw_btn(batch, batch.width - 46.0, batch.height - 90.0, 40.0, 36.0, "SNK", sneaking);
+
+            // 5. Movement D-Pad guide indicator in Bottom Left
+            let jx = 42.0;
+            let jy = batch.height - 52.0;
+            let guide_color = horizon_client::hud::rgba(255, 255, 255, (opacity / 4).max(25));
+            batch.fill(atlas, jx - 14.0, jy - 1.0, 28.0, 2.0, guide_color);
+            batch.fill(atlas, jx - 1.0, jy - 14.0, 2.0, 28.0, guide_color);
+            batch.text(atlas, "^", jx - 2.0, jy - 22.0, text_color, true);
+            batch.text(atlas, "v", jx - 2.0, jy + 14.0, text_color, true);
+            batch.text(atlas, "<", jx - 22.0, jy - 4.0, text_color, true);
+            batch.text(atlas, ">", jx + 16.0, jy - 4.0, text_color, true);
+        }
     }
     fn creative_inventory_open(&self) -> bool {
         self.screen == Screen::Creative && self.creative_screen.tab().inventory
@@ -12579,6 +12641,16 @@ impl Game<'_> {
         id: WindowId,
         touch: winit::event::Touch,
     ) -> Result<()> {
+        let (raw_x, raw_y) = (touch.location.x as f32, touch.location.y as f32);
+
+        // 0. Joystick analog stick emitted as Touch by winit on Android
+        if raw_x.abs() <= 1.05 && raw_y.abs() <= 1.05 {
+            horizon_client::android_gamepad::on_stick(raw_x, raw_y);
+            return Ok(());
+        }
+
+        let (x, y) = (raw_x, raw_y);
+
         let size = self
             .renderer
             .as_ref()
@@ -12586,13 +12658,21 @@ impl Game<'_> {
             .unwrap_or([1920.0, 1080.0]);
         let width = size[0];
         let height = size[1];
-        let (x, y) = (touch.location.x as f32, touch.location.y as f32);
+        let scale = self
+            .renderer
+            .as_ref()
+            .map(|r| horizon_client::hud::HudBatch::new([r.config.width, r.config.height]).scale)
+            .unwrap_or(2.0);
+        let gx = raw_x / scale;
+        let gy = raw_y / scale;
+        let gw = width / scale;
+        let gh = height / scale;
 
         // 1. If we are in ANY screen or menu (Title, Inventory, Pause, Chest, Options, etc.):
         if self.screen != Screen::Playing || self.title.is_some() {
             match touch.phase {
                 winit::event::TouchPhase::Started => {
-                    self.cursor = (x, y);
+                    self.cursor = (raw_x, raw_y);
                     self.window_event(
                         event_loop,
                         id,
@@ -12612,7 +12692,7 @@ impl Game<'_> {
                     );
                 }
                 winit::event::TouchPhase::Moved => {
-                    self.cursor = (x, y);
+                    self.cursor = (raw_x, raw_y);
                     self.window_event(
                         event_loop,
                         id,
@@ -12642,16 +12722,16 @@ impl Game<'_> {
             self.capture(true);
         }
 
-        // Top-right (x > width - 120.0, y < 100.0): Pause Menu (Escape)
-        if x > width - 120.0 && y < 100.0 {
+        // Top-right: Pause Menu (Escape / ||)
+        if gx >= gw - 40.0 && gy <= 34.0 {
             if touch.phase == winit::event::TouchPhase::Ended {
                 self.key_pressed(KeyCode::Escape)?;
             }
             return Ok(());
         }
 
-        // Top-left (x < 120.0, y < 100.0): Inventory (E)
-        if x < 120.0 && y < 100.0 {
+        // Top-left: Inventory (E / INV)
+        if gx <= 44.0 && gy <= 34.0 {
             if touch.phase == winit::event::TouchPhase::Ended {
                 self.mapped_key(KeyCode::KeyE, true, false)?;
                 self.mapped_key(KeyCode::KeyE, false, false)?;
@@ -12659,17 +12739,18 @@ impl Game<'_> {
             return Ok(());
         }
 
-        // Bottom center: Hotbar (y > height - 120.0, x between 25% and 75% width)
-        if y > height - 120.0 && x >= width * 0.25 && x <= width * 0.75 {
+        // Bottom center: Hotbar (gy >= gh - 26.0)
+        let hotbar_left = (gw - 182.0) / 2.0;
+        if gy >= gh - 26.0 && gx >= hotbar_left && gx <= hotbar_left + 182.0 {
             if matches!(touch.phase, winit::event::TouchPhase::Started | winit::event::TouchPhase::Moved) {
-                let slot = (((x - width * 0.25) / (width * 0.50)) * 9.0).clamp(0.0, 8.0) as usize;
+                let slot = (((gx - hotbar_left) / 182.0) * 9.0).clamp(0.0, 8.0) as usize;
                 self.selected = slot;
             }
             return Ok(());
         }
 
-        // Bottom right Jump button (x > width - 180.0, y > height - 200.0)
-        if x > width - 180.0 && y > height - 200.0 {
+        // Bottom right: Jump button [JUMP]
+        if gx >= gw - 52.0 && gy >= gh - 54.0 {
             match touch.phase {
                 winit::event::TouchPhase::Started => {
                     self.mapped_key(KeyCode::Space, true, false)?;
@@ -12682,8 +12763,8 @@ impl Game<'_> {
             return Ok(());
         }
 
-        // Sneak button (above jump: x > width - 180.0, y between height - 340.0 and height - 200.0)
-        if x > width - 180.0 && y > height - 340.0 && y <= height - 200.0 {
+        // Above Jump: Sneak button [SNK]
+        if gx >= gw - 52.0 && gy >= gh - 96.0 && gy < gh - 54.0 {
             if touch.phase == winit::event::TouchPhase::Ended {
                 let sneaking = self.keys.contains(&KeyCode::ShiftLeft);
                 self.mapped_key(KeyCode::ShiftLeft, !sneaking, false)?;
