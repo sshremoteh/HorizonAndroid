@@ -266,6 +266,16 @@ impl Default for TouchLayout {
                     toggle: false,
                 },
                 TouchButton {
+                    id: "btn_mid".into(),
+                    label: "MID".into(),
+                    key: "mmb".into(),
+                    x: 0.66,
+                    y: 0.55,
+                    w: 0.12,
+                    h: 0.12,
+                    toggle: false,
+                },
+                TouchButton {
                     id: "btn_drop".into(),
                     label: "DROP".into(),
                     key: "q".into(),

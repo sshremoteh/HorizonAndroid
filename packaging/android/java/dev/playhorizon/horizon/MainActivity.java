@@ -309,6 +309,20 @@ public class MainActivity extends Activity {
         }
         settingsCard.addView(opBar);
 
+        // Control Layout Reset / Zalith Controls
+        Button resetControlsBtn = createButton("🎮 Сбросить раскладку на Zalith Launcher", "#2563EB", Color.WHITE);
+        resetControlsBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                File cfg = new File("/sdcard/horizon/touch_layout.json");
+                if (cfg.exists()) {
+                    cfg.delete();
+                }
+                Toast.makeText(MainActivity.this, "Раскладка управления сброшена на стандартную Zalith Launcher!", Toast.LENGTH_SHORT).show();
+            }
+        });
+        settingsCard.addView(resetControlsBtn);
+
         mContentLayout.addView(settingsCard);
 
         // 6. Actions / Launch Buttons
