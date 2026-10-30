@@ -6277,9 +6277,9 @@ impl Game<'_> {
 
             // 1. Draw Buttons
             for (i, btn) in self.touch_overlay.layout.buttons.iter().enumerate() {
-                // In screens/menus (inventory, chest, pause), only show the utility bar so as not to obstruct slots
+                // In screens/menus (inventory, chest, pause, options), only show the utility bar so as not to obstruct slots
                 if self.screen != Screen::Playing && !self.touch_overlay.is_editing {
-                    if btn.key != "esc" && btn.key != "e" && btn.key != "kbd" && btn.key != "gui" {
+                    if btn.key != "esc" && btn.key != "e" && btn.key != "opt" && btn.key != "kbd" && btn.key != "gui" {
                         continue;
                     }
                 }
@@ -12784,16 +12784,23 @@ impl Game<'_> {
 
         // 1. If we are in ANY screen or menu (Title, Inventory, Pause, Chest, Options, etc.):
         if self.screen != Screen::Playing || self.title.is_some() {
-            // Check if user tapped a utility button (ESC, INV, KBD, GUI) to close menu or type
+            // Check if user tapped a utility button (ESC, INV, OPT, KBD, GUI) to close menu or open settings
             if let Some(idx) = self.touch_overlay.layout.find_button(gx, gy, gw, gh) {
                 let btn = self.touch_overlay.layout.buttons[idx].clone();
-                if btn.key == "esc" || btn.key == "e" || btn.key == "kbd" || btn.key == "gui" {
+                if btn.key == "esc" || btn.key == "e" || btn.key == "opt" || btn.key == "kbd" || btn.key == "gui" {
                     if touch.phase == winit::event::TouchPhase::Started {
                         if btn.key == "esc" {
                             let _ = self.key_pressed(KeyCode::Escape);
                         } else if btn.key == "e" {
                             let _ = self.mapped_key(KeyCode::KeyE, true, false);
                             let _ = self.mapped_key(KeyCode::KeyE, false, false);
+                        } else if btn.key == "opt" {
+                            if self.screen == Screen::Options {
+                                self.screen = Screen::Playing;
+                                self.capture(true);
+                            } else {
+                                self.open_options(self.title.is_some());
+                            }
                         } else if btn.key == "kbd" {
                             if self.pad.menu.osk.is_some() {
                                 self.pad.menu.osk = None;
@@ -13094,6 +13101,14 @@ impl Game<'_> {
 
                 if btn.key == "gui" || btn.id == "btn_gui" {
                     self.touch_overlay.gui_hidden = !self.touch_overlay.gui_hidden;
+                    return Ok(());
+                } else if btn.key == "opt" || btn.id == "btn_opt" {
+                    if self.screen == Screen::Options {
+                        self.screen = Screen::Playing;
+                        self.capture(true);
+                    } else {
+                        self.open_options(self.title.is_some());
+                    }
                     return Ok(());
                 } else if btn.key == "edit" {
                     self.touch_overlay.is_editing = true;

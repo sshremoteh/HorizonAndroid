@@ -17,6 +17,9 @@ pub const AVAILABLE_KEYS: &[(&str, &str)] = &[
     ("alt", "ALT"),
     ("esc", "ESC"),
     ("e", "INV"),
+    ("opt", "OPT"),
+    ("gui", "GUI"),
+    ("edit", "EDIT"),
     ("q", "DROP"),
     ("t", "CHAT"),
     ("kbd", "KBD"),
@@ -75,7 +78,7 @@ pub struct TouchLayout {
 }
 
 fn default_version() -> u32 {
-    3
+    4
 }
 
 fn default_opacity() -> u8 {
@@ -85,7 +88,7 @@ fn default_opacity() -> u8 {
 impl Default for TouchLayout {
     fn default() -> Self {
         Self {
-            version: 3,
+            version: 4,
             opacity: 160,
             buttons: vec![
                 // --- Top Left Utility Buttons (Zalith Style) ---
@@ -171,6 +174,16 @@ impl Default for TouchLayout {
                 },
 
                 // --- Top Right Utility Buttons (Zalith Style) ---
+                TouchButton {
+                    id: "btn_opt".into(),
+                    label: "OPT".into(),
+                    key: "opt".into(),
+                    x: 0.71,
+                    y: 0.05,
+                    w: 0.18,
+                    h: 0.10,
+                    toggle: false,
+                },
                 TouchButton {
                     id: "btn_inv".into(),
                     label: "INV".into(),
@@ -334,7 +347,7 @@ impl TouchLayout {
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(layout) = serde_json::from_str::<Self>(&content) {
-                    if layout.version >= 3 {
+                    if layout.version >= 4 {
                         return layout;
                     }
                 }

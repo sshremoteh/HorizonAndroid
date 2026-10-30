@@ -586,19 +586,19 @@ public class MainActivity extends Activity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            mDownloadStatusText = "Распаковка ресурсов...";
-                            mDownloadProgress = 100;
+                            mDownloadStatusText = "Подготовка к распаковке...";
+                            mDownloadProgress = 0;
                             refreshStatus();
                         }
                     });
 
-                    unzipArchive(zipFile, targetDir);
+                    unzipArchiveWithProgress(zipFile, targetDir);
 
                     // Also mirror to /sdcard/horizon/ if storage permission is granted
                     try {
                         File sdHorizon = new File("/sdcard/horizon");
                         if (sdHorizon.canWrite() || checkStoragePermission()) {
-                            unzipArchive(zipFile, new File("/sdcard"));
+                            unzipArchiveWithProgress(zipFile, new File("/sdcard"));
                         }
                     } catch (Throwable ignored) {}
 
@@ -632,12 +632,24 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private void unzipArchive(File zipFile, File destDir) throws Exception {
+    private void unzipArchiveWithProgress(File zipFile, File destDir) throws Exception {
+        // First count total entries for accurate percentage calculation
+        int totalEntries = 0;
+        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(zipFile)) {
+            totalEntries = zf.size();
+        } catch (Throwable ignored) {
+            totalEntries = 1000;
+        }
+
+        final int finalTotal = Math.max(1, totalEntries);
         ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile)));
         ZipEntry ze;
         byte[] buffer = new byte[8192];
+        int processedEntries = 0;
+        long lastUpdate = System.currentTimeMillis();
 
         while ((ze = zis.getNextEntry()) != null) {
+            processedEntries++;
             String entryName = ze.getName();
             // Entry typically is horizon/resources/...
             File targetFile;
@@ -665,6 +677,21 @@ public class MainActivity extends Activity {
                 fos.close();
             }
             zis.closeEntry();
+
+            long now = System.currentTimeMillis();
+            if (now - lastUpdate > 100) {
+                lastUpdate = now;
+                final int current = processedEntries;
+                final int percent = Math.min(100, current * 100 / finalTotal);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        mDownloadProgress = percent;
+                        mDownloadStatusText = "Распаковка файлов: " + current + " / " + finalTotal + " (" + percent + "%)";
+                        refreshStatus();
+                    }
+                });
+            }
         }
         zis.close();
     }
