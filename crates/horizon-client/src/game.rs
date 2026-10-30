@@ -6232,7 +6232,7 @@ impl Game<'_> {
             self.draw_sign_editor(&mut batch);
             self.draw_book(&mut batch);
         }
-        if self.screen == Screen::Playing && self.title.is_none() && show_hud {
+        if self.title.is_none() && show_hud {
             self.draw_touch_controls(&mut batch);
         }
         batch
@@ -6248,12 +6248,24 @@ impl Game<'_> {
                 .and_then(|v| v.parse::<u8>().ok())
                 .unwrap_or(self.touch_overlay.layout.opacity);
 
-            let bg = horizon_client::hud::rgba(24, 24, 28, opacity);
-            let border = horizon_client::hud::rgba(255, 255, 255, (opacity / 2).max(40));
+            let bg = horizon_client::hud::rgba(18, 18, 24, opacity);
+            let border = horizon_client::hud::rgba(255, 255, 255, (opacity / 2).max(45));
             let text_color = 0xFFFFFFFF;
 
             // 1. Draw Buttons
             for (i, btn) in self.touch_overlay.layout.buttons.iter().enumerate() {
+                // In screens/menus (inventory, chest, pause), only show the utility bar so as not to obstruct slots
+                if self.screen != Screen::Playing && !self.touch_overlay.is_editing {
+                    if btn.key != "esc" && btn.key != "e" && btn.key != "kbd" && btn.key != "gui" {
+                        continue;
+                    }
+                }
+
+                // If GUI is hidden by user, only draw the GUI toggle button
+                if self.touch_overlay.gui_hidden && !self.touch_overlay.is_editing && btn.id != "btn_gui" && btn.id != "btn_edit" {
+                    continue;
+                }
+
                 let (bx, by, bw, bh) = self.touch_overlay.layout.button_rect(btn, gw, gh);
                 let is_selected = self.touch_overlay.is_editing && self.touch_overlay.selected_index == Some(i);
 
@@ -6264,30 +6276,39 @@ impl Game<'_> {
                 } else if btn.key == "rmb" {
                     self.right
                 } else if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
-                    self.keys.contains(&code)
+                    self.keys.contains(&code) || self.touch_overlay.dpad_keys_down.contains(&code)
                 } else {
                     false
                 };
 
                 let current_bg = if is_selected {
-                    horizon_client::hud::rgba(14, 116, 144, 210)
+                    horizon_client::hud::rgba(14, 116, 144, 230)
                 } else if is_active {
-                    horizon_client::hud::rgba(74, 222, 128, opacity.max(180))
+                    if btn.toggle {
+                        horizon_client::hud::rgba(34, 197, 94, opacity.max(200))
+                    } else {
+                        horizon_client::hud::rgba(99, 102, 241, opacity.max(200))
+                    }
                 } else {
                     bg
                 };
 
                 let current_border = if is_selected {
                     0xFF00E5FF
+                } else if is_active {
+                    0xFFFFFFFF
                 } else {
                     border
                 };
 
+                // Rounded bevel look
                 batch.fill(atlas, bx + 1.0, by + 1.0, bw - 2.0, bh - 2.0, current_bg);
+                // Top & left bevel highlight
                 batch.fill(atlas, bx, by, bw, 1.0, current_border);
-                batch.fill(atlas, bx, by + bh - 1.0, bw, 1.0, current_border);
                 batch.fill(atlas, bx, by, 1.0, bh, current_border);
-                batch.fill(atlas, bx + bw - 1.0, by, 1.0, bh, current_border);
+                // Bottom & right soft border
+                batch.fill(atlas, bx, by + bh - 1.0, bw, 1.0, horizon_client::hud::rgba(0, 0, 0, 100));
+                batch.fill(atlas, bx + bw - 1.0, by, 1.0, bh, horizon_client::hud::rgba(0, 0, 0, 100));
 
                 let tw = horizon_client::hud::HudBatch::text_width(atlas, &btn.label);
                 let tx = bx + (bw - tw) / 2.0;
@@ -12740,6 +12761,30 @@ impl Game<'_> {
 
         // 1. If we are in ANY screen or menu (Title, Inventory, Pause, Chest, Options, etc.):
         if self.screen != Screen::Playing || self.title.is_some() {
+            // Check if user tapped a utility button (ESC, INV, KBD, GUI) to close menu or type
+            if let Some(idx) = self.touch_overlay.layout.find_button(gx, gy, gw, gh) {
+                let btn = self.touch_overlay.layout.buttons[idx].clone();
+                if btn.key == "esc" || btn.key == "e" || btn.key == "kbd" || btn.key == "gui" {
+                    if touch.phase == winit::event::TouchPhase::Started {
+                        if btn.key == "esc" {
+                            let _ = self.key_pressed(KeyCode::Escape);
+                        } else if btn.key == "e" {
+                            let _ = self.mapped_key(KeyCode::KeyE, true, false);
+                            let _ = self.mapped_key(KeyCode::KeyE, false, false);
+                        } else if btn.key == "kbd" {
+                            if self.pad.menu.osk.is_some() {
+                                self.pad.menu.osk = None;
+                            } else {
+                                self.pad.menu.osk = Some(horizon_client::osk::Keyboard::default());
+                            }
+                        } else if btn.key == "gui" {
+                            self.touch_overlay.gui_hidden = !self.touch_overlay.gui_hidden;
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+
             match touch.phase {
                 winit::event::TouchPhase::Started => {
                     self.cursor = (raw_x, raw_y);
@@ -12945,72 +12990,151 @@ impl Game<'_> {
             return Ok(());
         }
 
-        // 4. Normal Gameplay: check if touch hits any custom touch button
-        if let Some(idx) = self.touch_overlay.layout.find_button(gx, gy, gw, gh) {
-            let btn = self.touch_overlay.layout.buttons[idx].clone();
+        // --- 4. D-Pad Zone Detection (Left Thumb Movement) ---
+        let dpad_cx = 0.12 * gw;
+        let dpad_cy = 0.75 * gh;
+        let dpad_radius = 0.28 * gh;
+        let dist_dpad = (gx - dpad_cx).hypot(gy - dpad_cy);
+        let in_dpad_zone = gx <= gw * 0.35 && gy >= gh * 0.40 && dist_dpad <= dpad_radius;
 
+        // If this touch is driving the D-Pad:
+        if self.touch_overlay.dpad_touch_id == Some(touch.id) {
             match touch.phase {
-                winit::event::TouchPhase::Started => {
-                    self.touch_overlay.active_touches.insert(touch.id, btn.id.clone());
+                winit::event::TouchPhase::Moved => {
+                    let mut new_keys = std::collections::HashSet::new();
+                    let deadzone = 0.04 * gh;
+                    if gy < dpad_cy - deadzone { new_keys.insert(KeyCode::KeyW); }
+                    if gy > dpad_cy + deadzone { new_keys.insert(KeyCode::KeyS); }
+                    if gx < dpad_cx - deadzone { new_keys.insert(KeyCode::KeyA); }
+                    if gx > dpad_cx + deadzone { new_keys.insert(KeyCode::KeyD); }
 
-                    if btn.key == "edit" {
-                        // Handled on release
-                    } else if btn.key == "kbd" {
-                        if self.pad.menu.osk.is_some() {
-                            self.pad.menu.osk = None;
-                        } else {
-                            self.pad.menu.osk = Some(horizon_client::osk::Keyboard::default());
-                        }
-                    } else if btn.key == "lmb" {
-                        self.left = true;
-                    } else if btn.key == "rmb" {
-                        self.right = true;
-                    } else if btn.key == "mmb" {
-                        self.play_mouse(winit::event::MouseButton::Middle, true)?;
-                    } else if btn.toggle {
-                        // Toggle handled on release
-                    } else if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
-                        match code {
-                            KeyCode::Escape => self.key_pressed(KeyCode::Escape)?,
-                            KeyCode::KeyE => {
-                                self.mapped_key(KeyCode::KeyE, true, false)?;
-                                self.mapped_key(KeyCode::KeyE, false, false)?;
-                            }
-                            KeyCode::F5 => self.cycle_camera(),
-                            _ => self.mapped_key(code, true, false)?,
+                    // Release keys that are no longer active
+                    let old_keys: Vec<KeyCode> = self.touch_overlay.dpad_keys_down.iter().copied().collect();
+                    for old_k in old_keys {
+                        if !new_keys.contains(&old_k) {
+                            self.mapped_key(old_k, false, false)?;
                         }
                     }
+                    // Press new keys
+                    for &new_k in &new_keys {
+                        if !self.touch_overlay.dpad_keys_down.contains(&new_k) {
+                            self.mapped_key(new_k, true, false)?;
+                        }
+                    }
+                    self.touch_overlay.dpad_keys_down = new_keys;
                     return Ok(());
                 }
                 winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
-                    self.touch_overlay.active_touches.remove(&touch.id);
+                    let to_release: Vec<KeyCode> = self.touch_overlay.dpad_keys_down.drain().collect();
+                    for k in to_release {
+                        self.mapped_key(k, false, false)?;
+                    }
+                    self.touch_overlay.dpad_touch_id = None;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
 
-                    if btn.key == "edit" {
-                        self.touch_overlay.is_editing = true;
-                        return Ok(());
-                    } else if btn.key == "kbd" {
-                        return Ok(());
-                    } else if btn.key == "lmb" {
-                        self.left = false;
-                    } else if btn.key == "rmb" {
-                        self.right = false;
-                    } else if btn.key == "mmb" {
-                        self.play_mouse(winit::event::MouseButton::Middle, false)?;
-                    } else if btn.toggle {
-                        if self.touch_overlay.active_toggles.contains(&btn.id) {
-                            self.touch_overlay.active_toggles.remove(&btn.id);
-                            if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
-                                self.mapped_key(code, false, false)?;
-                            }
-                        } else {
-                            self.touch_overlay.active_toggles.insert(btn.id.clone());
-                            if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
-                                self.mapped_key(code, true, false)?;
-                            }
-                        }
-                    } else if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
-                        if code != KeyCode::Escape && code != KeyCode::KeyE && code != KeyCode::F5 {
+        // Check if touch starts inside D-Pad zone
+        if touch.phase == winit::event::TouchPhase::Started && (in_dpad_zone || matches!(self.touch_overlay.layout.find_button(gx, gy, gw, gh), Some(i) if self.touch_overlay.layout.buttons[i].id.starts_with("btn_up") || self.touch_overlay.layout.buttons[i].id.starts_with("btn_down") || self.touch_overlay.layout.buttons[i].id.starts_with("btn_left") || self.touch_overlay.layout.buttons[i].id.starts_with("btn_right") || self.touch_overlay.layout.buttons[i].id == "btn_snk")) {
+            self.touch_overlay.dpad_touch_id = Some(touch.id);
+            if dist_dpad < 0.06 * gh {
+                // Center sneak toggle
+                if self.touch_overlay.active_toggles.contains("btn_snk") {
+                    self.touch_overlay.active_toggles.remove("btn_snk");
+                    self.mapped_key(KeyCode::ShiftLeft, false, false)?;
+                } else {
+                    self.touch_overlay.active_toggles.insert("btn_snk".to_string());
+                    self.mapped_key(KeyCode::ShiftLeft, true, false)?;
+                }
+            } else {
+                let mut new_keys = std::collections::HashSet::new();
+                let deadzone = 0.04 * gh;
+                if gy < dpad_cy - deadzone { new_keys.insert(KeyCode::KeyW); }
+                if gy > dpad_cy + deadzone { new_keys.insert(KeyCode::KeyS); }
+                if gx < dpad_cx - deadzone { new_keys.insert(KeyCode::KeyA); }
+                if gx > dpad_cx + deadzone { new_keys.insert(KeyCode::KeyD); }
+                for &new_k in &new_keys {
+                    self.mapped_key(new_k, true, false)?;
+                }
+                self.touch_overlay.dpad_keys_down = new_keys;
+            }
+            return Ok(());
+        }
+
+        // --- 5. Custom Action & Utility Buttons ---
+        if touch.phase == winit::event::TouchPhase::Started {
+            if let Some(idx) = self.touch_overlay.layout.find_button(gx, gy, gw, gh) {
+                let btn = self.touch_overlay.layout.buttons[idx].clone();
+                self.touch_overlay.active_touches.insert(touch.id, btn.id.clone());
+
+                if btn.key == "gui" || btn.id == "btn_gui" {
+                    self.touch_overlay.gui_hidden = !self.touch_overlay.gui_hidden;
+                    return Ok(());
+                } else if btn.key == "edit" {
+                    self.touch_overlay.is_editing = true;
+                    return Ok(());
+                } else if btn.key == "kbd" {
+                    if self.pad.menu.osk.is_some() {
+                        self.pad.menu.osk = None;
+                    } else {
+                        self.pad.menu.osk = Some(horizon_client::osk::Keyboard::default());
+                    }
+                } else if btn.key == "lmb" {
+                    self.attack_clicks += 1;
+                    self.left = true;
+                } else if btn.key == "rmb" {
+                    self.right = true;
+                    let _ = self.use_with_hand();
+                } else if btn.key == "mmb" {
+                    self.play_mouse(winit::event::MouseButton::Middle, true)?;
+                } else if btn.toggle {
+                    if self.touch_overlay.active_toggles.contains(&btn.id) {
+                        self.touch_overlay.active_toggles.remove(&btn.id);
+                        if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
                             self.mapped_key(code, false, false)?;
+                        }
+                    } else {
+                        self.touch_overlay.active_toggles.insert(btn.id.clone());
+                        if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
+                            self.mapped_key(code, true, false)?;
+                        }
+                    }
+                } else if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
+                    match code {
+                        KeyCode::Escape => self.key_pressed(KeyCode::Escape)?,
+                        KeyCode::KeyE => {
+                            self.mapped_key(KeyCode::KeyE, true, false)?;
+                            self.mapped_key(KeyCode::KeyE, false, false)?;
+                        }
+                        KeyCode::F5 => self.cycle_camera(),
+                        _ => self.mapped_key(code, true, false)?,
+                    }
+                }
+                return Ok(());
+            }
+        }
+
+        // If this touch is holding an action button:
+        if self.touch_overlay.active_touches.contains_key(&touch.id) {
+            match touch.phase {
+                winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
+                    if let Some(btn_id) = self.touch_overlay.active_touches.remove(&touch.id) {
+                        if let Some(btn) = self.touch_overlay.layout.buttons.iter().find(|b| b.id == btn_id) {
+                            if btn.key == "lmb" {
+                                self.left = false;
+                            } else if btn.key == "rmb" {
+                                self.right = false;
+                            } else if btn.key == "mmb" {
+                                let _ = self.play_mouse(winit::event::MouseButton::Middle, false);
+                            } else if !btn.toggle {
+                                if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
+                                    if code != KeyCode::Escape && code != KeyCode::KeyE && code != KeyCode::F5 {
+                                        self.mapped_key(code, false, false)?;
+                                    }
+                                }
+                            }
                         }
                     }
                     return Ok(());
@@ -13018,26 +13142,7 @@ impl Game<'_> {
                 winit::event::TouchPhase::Moved => {
                     return Ok(());
                 }
-            }
-        }
-
-        // Release any held button if pointer slid away
-        if matches!(touch.phase, winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled) {
-            if let Some(btn_id) = self.touch_overlay.active_touches.remove(&touch.id) {
-                if let Some(btn) = self.touch_overlay.layout.buttons.iter().find(|b| b.id == btn_id) {
-                    if btn.key == "lmb" {
-                        self.left = false;
-                    } else if btn.key == "rmb" {
-                        self.right = false;
-                    } else if btn.key == "mmb" {
-                        let _ = self.play_mouse(winit::event::MouseButton::Middle, false);
-                    } else if !btn.toggle {
-                        if let Some(code) = horizon_client::touch_controls::keycode_from_name(&btn.key) {
-                            self.mapped_key(code, false, false)?;
-                        }
-                    }
-                }
-                return Ok(());
+                _ => {}
             }
         }
 
@@ -13058,9 +13163,11 @@ impl Game<'_> {
 
         match touch.phase {
             winit::event::TouchPhase::Started => {
-                LOOK_TOUCH.store(touch.id, std::sync::atomic::Ordering::Relaxed);
-                *LOOK_PREV.lock().unwrap() = (x, y);
-                *LOOK_START.lock().unwrap() = Some(((x, y), Instant::now()));
+                if gx >= gw * 0.30 {
+                    LOOK_TOUCH.store(touch.id, std::sync::atomic::Ordering::Relaxed);
+                    *LOOK_PREV.lock().unwrap() = (x, y);
+                    *LOOK_START.lock().unwrap() = Some(((x, y), Instant::now()));
+                }
             }
             winit::event::TouchPhase::Moved => {
                 if LOOK_TOUCH.load(std::sync::atomic::Ordering::Relaxed) == touch.id {
