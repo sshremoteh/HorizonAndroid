@@ -49,6 +49,10 @@ public class HorizonGameActivity extends NativeActivity implements InputManager.
             if (touchOpacity != null && !touchOpacity.isEmpty()) {
                 try { Os.setenv("HORIZON_TOUCH_OPACITY", touchOpacity, true); } catch (Throwable ignored) {}
             }
+            String resourcesPath = getIntent().getStringExtra("HORIZON_RESOURCES");
+            if (resourcesPath != null && !resourcesPath.isEmpty()) {
+                try { Os.setenv("HORIZON_RESOURCES", resourcesPath, true); } catch (Throwable ignored) {}
+            }
         }
 
         super.onCreate(savedInstanceState);

@@ -23,16 +23,26 @@ import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileReader;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class MainActivity extends Activity {
     private static final String TAG = "HorizonLauncher";
+    private static final String RESOURCES_DOWNLOAD_URL = "https://github.com/sshremoteh/HorizonAndroid/releases/download/v0.1.5-android/horizon.zip";
 
     private LinearLayout mRootLayout;
     private LinearLayout mLeftColumn;
@@ -40,12 +50,17 @@ public class MainActivity extends Activity {
     private EditText mNameInput;
     private String mLastCrashText = null;
 
+    // Download state
+    private boolean mIsDownloading = false;
+    private int mDownloadProgress = 0;
+    private String mDownloadStatusText = "";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Log.i(TAG, "MainActivity created - Zalith Modern UI");
+        Log.i(TAG, "MainActivity created - Zalith Modern UI with Auto-Downloader");
 
-        // Ensure directories exist
+        // Ensure directories exist in Android/data/<package>/files/
         File extFiles = getExternalFilesDir(null);
         if (extFiles != null) {
             new File(extFiles, "resources").mkdirs();
@@ -63,7 +78,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        refreshStatus();
+        if (!mIsDownloading) {
+            refreshStatus();
+        }
     }
 
     private void buildZalithUi() {
@@ -361,36 +378,79 @@ public class MainActivity extends Activity {
 
         // Storage line
         TextView storeLine = new TextView(this);
-        storeLine.setText(hasStorageAccess ? "• Память: Доступ разрешен" : "• Память: Требуется доступ к файлам");
+        storeLine.setText(hasStorageAccess ? "• Память: Доступ разрешен" : "• Память: Внутренняя (Android/data)");
         storeLine.setTextSize(11);
-        storeLine.setTextColor(hasStorageAccess ? Color.parseColor("#34D399") : Color.parseColor("#FBBF24"));
+        storeLine.setTextColor(hasStorageAccess ? Color.parseColor("#34D399") : Color.parseColor("#38BDF8"));
         storeLine.setPadding(0, 6, 0, 0);
         statusCard.addView(storeLine);
 
-        if (!hasStorageAccess) {
-            Button grantBtn = new Button(this);
-            grantBtn.setText("Разрешить доступ к памяти");
-            grantBtn.setTextSize(10);
-            grantBtn.setBackground(createRoundedBackground("#854D0E", "#FACC15", 1, 6));
-            grantBtn.setTextColor(Color.WHITE);
-            grantBtn.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    requestStoragePermission();
-                }
-            });
-            statusCard.addView(grantBtn);
-        }
-
         // Resources line
         TextView resLine = new TextView(this);
-        resLine.setText(hasResources ? "• Ресурсы: Загружены (" + resPath.getName() + ")" : "• Ресурсы: Не найдены (/sdcard/horizon/resources)");
+        if (hasResources) {
+            resLine.setText("• Ресурсы: Загружены (" + resPath.getParentFile().getName() + "/" + resPath.getName() + ")");
+            resLine.setTextColor(Color.parseColor("#34D399"));
+        } else {
+            resLine.setText("• Ресурсы: Не установлены");
+            resLine.setTextColor(Color.parseColor("#F87171"));
+        }
         resLine.setTextSize(11);
-        resLine.setTextColor(hasResources ? Color.parseColor("#34D399") : Color.parseColor("#F87171"));
         resLine.setPadding(0, 4, 0, 0);
         statusCard.addView(resLine);
 
         mRightColumn.addView(statusCard);
+
+        // --- Download Card (or Progress bar if downloading) ---
+        LinearLayout downloadCard = createModernCard("#161824", "#2E3247");
+        if (mIsDownloading) {
+            TextView dlTitle = new TextView(this);
+            dlTitle.setText("📥 " + mDownloadStatusText);
+            dlTitle.setTextSize(12);
+            dlTitle.setTypeface(Typeface.DEFAULT_BOLD);
+            dlTitle.setTextColor(Color.parseColor("#38BDF8"));
+            downloadCard.addView(dlTitle);
+
+            ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            pb.setMax(100);
+            pb.setProgress(mDownloadProgress);
+            LinearLayout.LayoutParams pbLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 32);
+            pbLp.setMargins(0, 10, 0, 0);
+            pb.setLayoutParams(pbLp);
+            downloadCard.addView(pb);
+        } else {
+            TextView dlTitle = new TextView(this);
+            dlTitle.setText(hasResources ? "🔄 Обновить файлы игры (GitHub)" : "📥 Установить ресурсы игры (43 МБ)");
+            dlTitle.setTextSize(11);
+            dlTitle.setTypeface(Typeface.DEFAULT_BOLD);
+            dlTitle.setTextColor(Color.parseColor("#60A5FA"));
+            downloadCard.addView(dlTitle);
+
+            TextView dlDesc = new TextView(this);
+            dlDesc.setText("Автоматически скачивает horizon.zip с GitHub и распаковывает в Android/data/.../files/resources/");
+            dlDesc.setTextSize(10);
+            dlDesc.setTextColor(Color.parseColor("#94A3B8"));
+            dlDesc.setPadding(0, 4, 0, 0);
+            downloadCard.addView(dlDesc);
+
+            Button dlBtn = new Button(this);
+            dlBtn.setText(hasResources ? "Скачать заново с GitHub" : "⬇  Скачать и распаковать ресурсы");
+            dlBtn.setTextSize(11);
+            dlBtn.setTypeface(Typeface.DEFAULT_BOLD);
+            dlBtn.setBackground(createRoundedBackground("#1D4ED8", "#3B82F6", 1, 8));
+            dlBtn.setTextColor(Color.WHITE);
+            LinearLayout.LayoutParams dlBtnLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 84);
+            dlBtnLp.setMargins(0, 10, 0, 0);
+            dlBtn.setLayoutParams(dlBtnLp);
+            dlBtn.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    startResourcesDownload();
+                }
+            });
+            downloadCard.addView(dlBtn);
+        }
+        mRightColumn.addView(downloadCard);
 
         // --- Last Crash Card (if present) ---
         mLastCrashText = readCrashFile();
@@ -448,6 +508,167 @@ public class MainActivity extends Activity {
         mRightColumn.addView(playBtn);
     }
 
+    private void startResourcesDownload() {
+        if (mIsDownloading) return;
+        mIsDownloading = true;
+        mDownloadProgress = 0;
+        mDownloadStatusText = "Подключение к GitHub...";
+        refreshStatus();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                File targetDir = getExternalFilesDir(null);
+                if (targetDir == null) {
+                    targetDir = getFilesDir();
+                }
+                File zipFile = new File(targetDir, "horizon_download.zip");
+
+                try {
+                    // 1. Download horizon.zip from GitHub Releases
+                    URL url = new URL(RESOURCES_DOWNLOAD_URL);
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setInstanceFollowRedirects(true);
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(30000);
+
+                    int responseCode = conn.getResponseCode();
+                    // Follow 302 / 301 redirects manually if needed
+                    if (responseCode == HttpURLConnection.HTTP_MOVED_TEMP
+                            || responseCode == HttpURLConnection.HTTP_MOVED_PERM
+                            || responseCode == 307) {
+                        String newUrl = conn.getHeaderField("Location");
+                        conn = (HttpURLConnection) new URL(newUrl).openConnection();
+                        conn.setConnectTimeout(15000);
+                        conn.setReadTimeout(30000);
+                        responseCode = conn.getResponseCode();
+                    }
+
+                    if (responseCode != HttpURLConnection.HTTP_OK) {
+                        throw new Exception("HTTP error code: " + responseCode);
+                    }
+
+                    int fileLength = conn.getContentLength();
+                    InputStream input = new BufferedInputStream(conn.getInputStream());
+                    FileOutputStream output = new FileOutputStream(zipFile);
+
+                    byte[] data = new byte[8192];
+                    long total = 0;
+                    int count;
+                    long lastUpdate = System.currentTimeMillis();
+
+                    while ((count = input.read(data)) != -1) {
+                        total += count;
+                        output.write(data, 0, count);
+
+                        long now = System.currentTimeMillis();
+                        if (now - lastUpdate > 100) {
+                            lastUpdate = now;
+                            final int prog = (fileLength > 0) ? (int) (total * 100 / fileLength) : 0;
+                            final long curMb = total / (1024 * 1024);
+                            final long totalMb = fileLength / (1024 * 1024);
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    mDownloadProgress = prog;
+                                    mDownloadStatusText = "Скачивание: " + curMb + " МБ / " + totalMb + " МБ (" + prog + "%)";
+                                    refreshStatus();
+                                }
+                            });
+                        }
+                    }
+
+                    output.flush();
+                    output.close();
+                    input.close();
+
+                    // 2. Unpack zip into targetDir (Android/data/dev.playhorizon.horizon/files/)
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            mDownloadStatusText = "Распаковка ресурсов...";
+                            mDownloadProgress = 100;
+                            refreshStatus();
+                        }
+                    });
+
+                    unzipArchive(zipFile, targetDir);
+
+                    // Also mirror to /sdcard/horizon/ if storage permission is granted
+                    try {
+                        File sdHorizon = new File("/sdcard/horizon");
+                        if (sdHorizon.canWrite() || checkStoragePermission()) {
+                            unzipArchive(zipFile, new File("/sdcard"));
+                        }
+                    } catch (Throwable ignored) {}
+
+                    // Cleanup zip
+                    zipFile.delete();
+
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            mIsDownloading = false;
+                            Toast.makeText(MainActivity.this, "Ресурсы игры успешно установлены!", Toast.LENGTH_LONG).show();
+                            refreshStatus();
+                        }
+                    });
+
+                } catch (final Exception e) {
+                    Log.e(TAG, "Download or unzip failed", e);
+                    if (zipFile.exists()) {
+                        zipFile.delete();
+                    }
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            mIsDownloading = false;
+                            Toast.makeText(MainActivity.this, "Ошибка скачивания: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                            refreshStatus();
+                        }
+                    });
+                }
+            }
+        }).start();
+    }
+
+    private void unzipArchive(File zipFile, File destDir) throws Exception {
+        ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile)));
+        ZipEntry ze;
+        byte[] buffer = new byte[8192];
+
+        while ((ze = zis.getNextEntry()) != null) {
+            String entryName = ze.getName();
+            // Entry typically is horizon/resources/...
+            File targetFile;
+            if (entryName.startsWith("horizon/")) {
+                // When unpacking into getExternalFilesDir (which is already .../files/),
+                // unpack directly: horizon/resources -> resources/
+                String rel = entryName.substring("horizon/".length());
+                targetFile = new File(destDir, rel);
+            } else {
+                targetFile = new File(destDir, entryName);
+            }
+
+            if (ze.isDirectory()) {
+                targetFile.mkdirs();
+            } else {
+                File parent = targetFile.getParentFile();
+                if (parent != null && !parent.exists()) {
+                    parent.mkdirs();
+                }
+                FileOutputStream fos = new FileOutputStream(targetFile);
+                int len;
+                while ((len = zis.read(buffer)) > 0) {
+                    fos.write(buffer, 0, len);
+                }
+                fos.close();
+            }
+            zis.closeEntry();
+        }
+        zis.close();
+    }
+
     private LinearLayout createModernCard(String bgColor, String strokeColor) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -492,8 +713,10 @@ public class MainActivity extends Activity {
 
     private File findResourcesDirectory() {
         File[] candidates = new File[] {
-                new File("/sdcard/horizon/resources/horizon-resources.json"),
                 new File(getExternalFilesDir(null), "resources/horizon-resources.json"),
+                new File(getExternalFilesDir(null), "horizon/resources/horizon-resources.json"),
+                new File("/sdcard/horizon/resources/horizon-resources.json"),
+                new File("/sdcard/Android/data/" + getPackageName() + "/files/resources/horizon-resources.json"),
                 new File(getFilesDir(), "resources/horizon-resources.json")
         };
         for (File f : candidates) {
@@ -547,6 +770,12 @@ public class MainActivity extends Activity {
         intent.putExtra("HORIZON_RENDER_DISTANCE", String.valueOf(dist));
         intent.putExtra("HORIZON_SERVER_THREAD", inFrame ? "0" : "1");
         intent.putExtra("HORIZON_TOUCH_OPACITY", String.valueOf(alpha255));
+
+        File res = findResourcesDirectory();
+        if (res != null) {
+            intent.putExtra("HORIZON_RESOURCES", res.getAbsolutePath());
+        }
+
         startActivity(intent);
     }
 }

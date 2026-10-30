@@ -357,21 +357,44 @@ impl Options {
 
         #[cfg(target_os = "android")]
         let resources_path = {
-            let external = std::path::PathBuf::from("/sdcard/horizon/resources");
-            let app_external = std::path::PathBuf::from("/sdcard/Android/data/dev.playhorizon.horizon/files/resources");
-            let ext_from_app = horizon_client::android_app::external_data_path().map(|p| p.join("resources"));
-            let int_from_app = horizon_client::android_app::internal_data_path().map(|p| p.join("resources"));
+            if let Some(explicit) = std::env::var_os("HORIZON_RESOURCES").map(std::path::PathBuf::from) {
+                if explicit.join("horizon-resources.json").exists() {
+                    explicit
+                } else {
+                    let external = std::path::PathBuf::from("/sdcard/horizon/resources");
+                    let app_external = std::path::PathBuf::from("/sdcard/Android/data/dev.playhorizon.horizon/files/resources");
+                    let ext_from_app = horizon_client::android_app::external_data_path().map(|p| p.join("resources"));
+                    let int_from_app = horizon_client::android_app::internal_data_path().map(|p| p.join("resources"));
 
-            if external.join("horizon-resources.json").exists() {
-                external
-            } else if app_external.join("horizon-resources.json").exists() {
-                app_external
-            } else if let Some(ref ext) = ext_from_app.filter(|p| p.join("horizon-resources.json").exists()) {
-                ext.clone()
-            } else if let Some(ref internal) = int_from_app.filter(|p| p.join("horizon-resources.json").exists()) {
-                internal.clone()
+                    if external.join("horizon-resources.json").exists() {
+                        external
+                    } else if app_external.join("horizon-resources.json").exists() {
+                        app_external
+                    } else if let Some(ref ext) = ext_from_app.filter(|p| p.join("horizon-resources.json").exists()) {
+                        ext.clone()
+                    } else if let Some(ref internal) = int_from_app.filter(|p| p.join("horizon-resources.json").exists()) {
+                        internal.clone()
+                    } else {
+                        explicit
+                    }
+                }
             } else {
-                external
+                let external = std::path::PathBuf::from("/sdcard/horizon/resources");
+                let app_external = std::path::PathBuf::from("/sdcard/Android/data/dev.playhorizon.horizon/files/resources");
+                let ext_from_app = horizon_client::android_app::external_data_path().map(|p| p.join("resources"));
+                let int_from_app = horizon_client::android_app::internal_data_path().map(|p| p.join("resources"));
+
+                if external.join("horizon-resources.json").exists() {
+                    external
+                } else if app_external.join("horizon-resources.json").exists() {
+                    app_external
+                } else if let Some(ref ext) = ext_from_app.filter(|p| p.join("horizon-resources.json").exists()) {
+                    ext.clone()
+                } else if let Some(ref internal) = int_from_app.filter(|p| p.join("horizon-resources.json").exists()) {
+                    internal.clone()
+                } else {
+                    external
+                }
             }
         };
 
