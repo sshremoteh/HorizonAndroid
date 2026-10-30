@@ -5,11 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TARGET="aarch64-linux-android"
 PROFILE="${1:-fast}"
+BUILD_MODE="${2:-rac}" # "rac" (ultra-fast standalone packager) or "aapt2" (classic android-sdk toolchain)
 ANDROID_JAR="/opt/android-sdk/platforms/android-34/android.jar"
 KEYSTORE="/opt/android-sdk/debug.keystore"
 BUILD_DIR="${SCRIPT_DIR}/build"
 
-echo "=== Building Horizon Android (Native Rust Client) [profile=${PROFILE}] ==="
+echo "=== Building Horizon Android (Native Rust Client) [profile=${PROFILE}, packager=${BUILD_MODE}] ==="
 
 # 1. Compile Rust native library
 echo "-> Compiling libhorizon_client.so for ${TARGET} (profile=${PROFILE})..."
@@ -39,38 +40,44 @@ java -cp /opt/android-sdk/build-tools/r8.jar com.android.tools.r8.D8 \
     --output "${BUILD_DIR}" \
     $(find "${BUILD_DIR}/java_bin" -name "*.class")
 
-# 5. Compile Android resources
-echo "-> Compiling Android resources with aapt2..."
-aapt2 compile --dir res -o "${BUILD_DIR}/compiled_res.zip"
+if [ "${BUILD_MODE}" = "rac" ] && command -v rac >/dev/null 2>&1; then
+    # --- Ultra-Fast RAC Packaging & V2 Signing Pipeline ---
+    echo "-> Packaging and signing APK via RAC (Rust Android Compiler)..."
+    cp "${SCRIPT_DIR}/AndroidManifest.xml" "${BUILD_DIR}/"
+    cp -r "${SCRIPT_DIR}/res" "${BUILD_DIR}/"
 
-echo "-> Linking APK with aapt2..."
-aapt2 link -I "${ANDROID_JAR}" \
-    --manifest AndroidManifest.xml \
-    -o "${BUILD_DIR}/unaligned.apk" \
-    "${BUILD_DIR}/compiled_res.zip"
+    rac build "${BUILD_DIR}" -o "${SCRIPT_DIR}/horizon-android-debug.apk"
+    rac verify "${SCRIPT_DIR}/horizon-android-debug.apk"
+else
+    # --- Classic aapt2 + zipalign + apksigner Pipeline ---
+    echo "-> Compiling Android resources with aapt2..."
+    aapt2 compile --dir res -o "${BUILD_DIR}/compiled_res.zip"
 
-# 6. Inject native library and classes.dex into APK
-echo "-> Adding native library and classes.dex to APK..."
-cd "${BUILD_DIR}"
-python3 -c '
+    echo "-> Linking APK with aapt2..."
+    aapt2 link -I "${ANDROID_JAR}" \
+        --manifest AndroidManifest.xml \
+        -o "${BUILD_DIR}/unaligned.apk" \
+        "${BUILD_DIR}/compiled_res.zip"
+
+    echo "-> Adding native library and classes.dex to APK..."
+    cd "${BUILD_DIR}"
+    python3 -c '
 import zipfile
 with zipfile.ZipFile("unaligned.apk", "a") as apk:
     apk.write("classes.dex", "classes.dex")
     apk.write("lib/arm64-v8a/libhorizon_client.so", "lib/arm64-v8a/libhorizon_client.so", compress_type=zipfile.ZIP_STORED)
 '
+    echo "-> Zipaligning APK..."
+    zipalign -f -p 4 "${BUILD_DIR}/unaligned.apk" "${BUILD_DIR}/horizon-aligned.apk"
 
-# 7. Zipalign (4-byte alignment for uncompressed SOs)
-echo "-> Zipaligning APK..."
-zipalign -f -p 4 "${BUILD_DIR}/unaligned.apk" "${BUILD_DIR}/horizon-aligned.apk"
+    echo "-> Signing APK..."
+    apksigner sign --ks "${KEYSTORE}" \
+        --ks-pass pass:android \
+        --out "${SCRIPT_DIR}/horizon-android-debug.apk" \
+        "${BUILD_DIR}/horizon-aligned.apk"
+fi
 
-# 8. Sign APK with debug keystore
-echo "-> Signing APK..."
-apksigner sign --ks "${KEYSTORE}" \
-    --ks-pass pass:android \
-    --out "${SCRIPT_DIR}/horizon-android-debug.apk" \
-    "${BUILD_DIR}/horizon-aligned.apk"
-
-# 9. Copy to /sdcard
+# 5. Copy to /sdcard
 echo "-> Copying APK to /sdcard/horizon-android.apk..."
 mkdir -p /sdcard/horizon/resources
 cp -f "${SCRIPT_DIR}/horizon-android-debug.apk" "/sdcard/horizon-android.apk"
