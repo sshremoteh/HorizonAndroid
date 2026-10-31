@@ -1,6 +1,7 @@
 package dev.playhorizon.horizon;
 
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -8,6 +9,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -18,6 +20,7 @@ import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
@@ -65,11 +68,17 @@ public class MainActivity extends Activity {
         if (extFiles != null) {
             new File(extFiles, "resources").mkdirs();
             new File(extFiles, "logs").mkdirs();
+            new File(extFiles, "mods").mkdirs();
+            new File(extFiles, "resourcepacks").mkdirs();
+            new File(extFiles, "shaderpacks").mkdirs();
         }
         try {
             File sdcardHorizon = new File("/sdcard/horizon/resources");
             sdcardHorizon.mkdirs();
             new File("/sdcard/horizon/logs").mkdirs();
+            new File("/sdcard/horizon/mods").mkdirs();
+            new File("/sdcard/horizon/resourcepacks").mkdirs();
+            new File("/sdcard/horizon/shaderpacks").mkdirs();
         } catch (Throwable ignored) {}
 
         buildZalithUi();
@@ -488,6 +497,52 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f));
         mRightColumn.addView(spacer);
 
+        // --- ACTION ROW: SETTINGS & CONTENT HUB ---
+        LinearLayout actionRow = new LinearLayout(this);
+        actionRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams actionRowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        actionRowLp.setMargins(0, 6, 0, 6);
+        actionRow.setLayoutParams(actionRowLp);
+
+        // 1. Dedicated Settings Button
+        Button settingsBtn = new Button(this);
+        settingsBtn.setText("⚙️  Настройки");
+        settingsBtn.setTextSize(11);
+        settingsBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        settingsBtn.setBackground(createRoundedBackground("#181926", "#3730A3", 1, 10));
+        settingsBtn.setTextColor(Color.parseColor("#C7D2FE"));
+        LinearLayout.LayoutParams setLp = new LinearLayout.LayoutParams(0, 96, 1.0f);
+        setLp.setMargins(0, 0, 6, 0);
+        settingsBtn.setLayoutParams(setLp);
+        settingsBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showSettingsDialog();
+            }
+        });
+        actionRow.addView(settingsBtn);
+
+        // 2. Dedicated Mods, Packs & Shaders Button
+        Button contentBtn = new Button(this);
+        contentBtn.setText("📦  Моды, Пакеты, Шейдеры");
+        contentBtn.setTextSize(11);
+        contentBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        contentBtn.setBackground(createRoundedBackground("#161E2E", "#1D4ED8", 1, 10));
+        contentBtn.setTextColor(Color.parseColor("#93C5FD"));
+        LinearLayout.LayoutParams cntLp = new LinearLayout.LayoutParams(0, 96, 1.0f);
+        cntLp.setMargins(6, 0, 0, 0);
+        contentBtn.setLayoutParams(cntLp);
+        contentBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showContentHubDialog();
+            }
+        });
+        actionRow.addView(contentBtn);
+
+        mRightColumn.addView(actionRow);
+
         // --- BIG ZALITH PLAY BUTTON ---
         Button playBtn = new Button(this);
         playBtn.setText(hasResources ? "▶  ИГРАТЬ (PLAY)" : "▶  ИГРАТЬ (БЕЗ РЕСУРСОВ)");
@@ -776,8 +831,270 @@ public class MainActivity extends Activity {
         return null;
     }
 
+    private void showSettingsDialog() {
+        final Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackground(createRoundedBackground("#10121A", "#26283B", 2, 16));
+        root.setPadding(32, 28, 32, 28);
+        root.setLayoutParams(new ViewGroup.LayoutParams(
+                (int) (getResources().getDisplayMetrics().widthPixels * 0.75f),
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView title = new TextView(this);
+        title.setText("⚙️  НАСТРОЙКИ ИГРЫ");
+        title.setTextSize(16);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(Color.parseColor("#9A86FF"));
+        root.addView(title);
+
+        TextView sub = new TextView(this);
+        sub.setText("Выберите раздел для перехода к настройкам Horizon:");
+        sub.setTextSize(11);
+        sub.setTextColor(Color.parseColor("#94A3B8"));
+        sub.setPadding(0, 4, 0, 16);
+        root.addView(sub);
+
+        // Option 1: Full Main Options
+        Button btnAll = createDialogButton(
+                "🎮  Все внутриигровые настройки",
+                "Главное меню: графика, звук, управление, FOV, язык, чат",
+                "#181926", "#3730A3", "#C7D2FE");
+        btnAll.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+                launchGameWithPage("options");
+            }
+        });
+        root.addView(btnAll);
+
+        // Option 2: Controls & Touch
+        Button btnControls = createDialogButton(
+                "🕹️  Управление и контроллеры",
+                "Раскладка сенсорного экрана Zalith, геймпады и горячие клавиши",
+                "#181926", "#3730A3", "#C7D2FE");
+        btnControls.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+                launchGameWithPage("controls");
+            }
+        });
+        root.addView(btnControls);
+
+        // Option 3: Video & Graphics
+        Button btnVideo = createDialogButton(
+                "🖥️  Графика и видео",
+                "Дистанция чанков, FPS лимит, шейдеры, освещение, VSync",
+                "#181926", "#3730A3", "#C7D2FE");
+        btnVideo.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+                launchGameWithPage("video");
+            }
+        });
+        root.addView(btnVideo);
+
+        // Option 4: Audio & Sounds
+        Button btnAudio = createDialogButton(
+                "🔊  Звуки и музыка",
+                "Громкость окружения, шагов, мобов, интерфейса и фоновая музыка",
+                "#181926", "#3730A3", "#C7D2FE");
+        btnAudio.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+                launchGameWithPage("sound");
+            }
+        });
+        root.addView(btnAudio);
+
+        // Close button
+        Button btnClose = new Button(this);
+        btnClose.setText("Закрыть");
+        btnClose.setTextSize(12);
+        btnClose.setBackground(createRoundedBackground("#181922", "#27273A", 1, 8));
+        btnClose.setTextColor(Color.parseColor("#94A3B8"));
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 84);
+        closeLp.setMargins(0, 14, 0, 0);
+        btnClose.setLayoutParams(closeLp);
+        btnClose.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+            }
+        });
+        root.addView(btnClose);
+
+        dialog.setContentView(root);
+        dialog.show();
+    }
+
+    private void showContentHubDialog() {
+        final Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackground(createRoundedBackground("#10121A", "#26283B", 2, 16));
+        root.setPadding(32, 28, 32, 28);
+        root.setLayoutParams(new ViewGroup.LayoutParams(
+                (int) (getResources().getDisplayMetrics().widthPixels * 0.75f),
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView title = new TextView(this);
+        title.setText("📦  МОДЫ, РЕСУРС-ПАКИ И ШЕЙДЕРЫ");
+        title.setTextSize(16);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(Color.parseColor("#38BDF8"));
+        root.addView(title);
+
+        TextView sub = new TextView(this);
+        sub.setText("Управление дополнениями и пакетами контента Horizon:");
+        sub.setTextSize(11);
+        sub.setTextColor(Color.parseColor("#94A3B8"));
+        sub.setPadding(0, 4, 0, 16);
+        root.addView(sub);
+
+        // 1. Mods Button
+        Button btnMods = createDialogButton(
+                "🧩  Моды (WebAssembly Mods)",
+                "Управление .hmod модами: включение, отключение, порядок и свойства",
+                "#142338", "#1E40AF", "#93C5FD");
+        btnMods.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+                launchGameWithPage("mods");
+            }
+        });
+        root.addView(btnMods);
+
+        // 2. Resource Packs Button
+        Button btnPacks = createDialogButton(
+                "🎨  Ресурс-паки (Texture Packs)",
+                "Управление текстурами (.zip): изменение порядка слоев и активация",
+                "#142338", "#1E40AF", "#93C5FD");
+        btnPacks.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+                launchGameWithPage("packs");
+            }
+        });
+        root.addView(btnPacks);
+
+        // 3. Shaders Button
+        Button btnShaders = createDialogButton(
+                "✨  Шейдеры (Shader Packs)",
+                "Выбор WGSL (.hshader) и классических Iris/OptiFine шейдерпаков",
+                "#142338", "#1E40AF", "#93C5FD");
+        btnShaders.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+                launchGameWithPage("shaders");
+            }
+        });
+        root.addView(btnShaders);
+
+        // 4. Open Folder / Explorer
+        Button btnFolder = createDialogButton(
+                "📂  Открыть папку с дополнениями",
+                "Показать путь и открыть менеджер файлов для mods, resourcepacks, shaderpacks",
+                "#1E293B", "#334155", "#38BDF8");
+        btnFolder.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openContentFolders();
+            }
+        });
+        root.addView(btnFolder);
+
+        // Close button
+        Button btnClose = new Button(this);
+        btnClose.setText("Закрыть");
+        btnClose.setTextSize(12);
+        btnClose.setBackground(createRoundedBackground("#181922", "#27273A", 1, 8));
+        btnClose.setTextColor(Color.parseColor("#94A3B8"));
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 84);
+        closeLp.setMargins(0, 14, 0, 0);
+        btnClose.setLayoutParams(closeLp);
+        btnClose.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+            }
+        });
+        root.addView(btnClose);
+
+        dialog.setContentView(root);
+        dialog.show();
+    }
+
+    private Button createDialogButton(String title, String subtitle, String bgColor, String strokeColor, String textColor) {
+        Button btn = new Button(this);
+        btn.setText(title + "\n" + subtitle);
+        btn.setTextSize(11);
+        btn.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        btn.setPadding(24, 16, 24, 16);
+        btn.setBackground(createRoundedBackground(bgColor, strokeColor, 1, 10));
+        btn.setTextColor(Color.parseColor(textColor));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 0, 0, 10);
+        btn.setLayoutParams(lp);
+        return btn;
+    }
+
+    private void openContentFolders() {
+        File ext = getExternalFilesDir(null);
+        if (ext == null) ext = getFilesDir();
+        File mods = new File(ext, "mods");
+        File packs = new File(ext, "resourcepacks");
+        File shaders = new File(ext, "shaderpacks");
+        mods.mkdirs();
+        packs.mkdirs();
+        shaders.mkdirs();
+
+        String pathInfo = "Папка дополнений:\n" + ext.getAbsolutePath() + "\n(mods/, resourcepacks/, shaderpacks/)";
+        ClipboardManager cb = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cb != null) {
+            cb.setPrimaryClip(ClipData.newPlainText("Horizon Path", ext.getAbsolutePath()));
+        }
+        Toast.makeText(this, pathInfo + "\n\nПуть скопирован в буфер обмена!", Toast.LENGTH_LONG).show();
+
+        try {
+            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+            intent.setType("*/*");
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            startActivity(intent);
+        } catch (Throwable ignored) {}
+    }
+
     private void launchGame() {
-        Log.i(TAG, "Launching HorizonGameActivity with Zalith profile settings...");
+        launchGameWithPage(null);
+    }
+
+    private void launchGameWithPage(String startupPage) {
+        File res = findResourcesDirectory();
+        if (res == null && startupPage != null) {
+            Toast.makeText(this, "Сначала установите ресурсы игры для входа в меню!", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Log.i(TAG, "Launching HorizonGameActivity (page=" + startupPage + ")...");
         SharedPreferences prefs = getSharedPreferences("horizon_launcher_prefs", MODE_PRIVATE);
         String name = prefs.getString("player_name", "Player");
         if (mNameInput != null && mNameInput.getText() != null) {
@@ -797,8 +1114,10 @@ public class MainActivity extends Activity {
         intent.putExtra("HORIZON_RENDER_DISTANCE", String.valueOf(dist));
         intent.putExtra("HORIZON_SERVER_THREAD", inFrame ? "0" : "1");
         intent.putExtra("HORIZON_TOUCH_OPACITY", String.valueOf(alpha255));
+        if (startupPage != null && !startupPage.isEmpty()) {
+            intent.putExtra("HORIZON_STARTUP_PAGE", startupPage);
+        }
 
-        File res = findResourcesDirectory();
         if (res != null) {
             intent.putExtra("HORIZON_RESOURCES", res.getAbsolutePath());
         }

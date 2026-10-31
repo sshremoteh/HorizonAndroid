@@ -15622,6 +15622,7 @@ fn start_game<'a>(
             );
             title.last_server = game.settings.file.string("lastServer");
             game.title = Some(title);
+            game.apply_startup_page();
         }
     }
     if std::env::var_os("HORIZON_COMMAND_SCRIPT").is_some()
@@ -15901,6 +15902,7 @@ impl Loading {
         game.panorama_rotation = self.panorama_rotation;
         self.menu.handoff(&mut game);
         game.apply_settings();
+        game.apply_startup_page();
         game.previous = Instant::now();
         log::info!(
             "Horizon: startup handoff {} ms (renderer {} ms, start_game {} ms)",

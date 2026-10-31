@@ -94,6 +94,31 @@ impl Game<'_> {
     pub(super) fn open_options(&mut self, from_title: bool) {
         self.open_options_at(from_title, Page::Main);
     }
+    pub(super) fn apply_startup_page(&mut self) {
+        if let Ok(startup_page) = std::env::var("HORIZON_STARTUP_PAGE") {
+            let page = match startup_page.to_lowercase().as_str() {
+                "options" | "settings" | "main" => Some(Page::Main),
+                "mods" => Some(Page::Mods),
+                "packs" | "resourcepacks" | "resource_packs" => Some(Page::Packs),
+                "shaders" | "shaderpacks" | "shader_packs" => Some(Page::ShaderPacks),
+                "video" | "graphics" => Some(Page::Video),
+                "sound" | "audio" => Some(Page::Sound),
+                "controls" => Some(Page::Controls),
+                "keybinds" | "keys" => Some(Page::KeyBinds),
+                "chat" => Some(Page::Chat),
+                "language" | "lang" => Some(Page::Language),
+                _ => None,
+            };
+            if let Some(target_page) = page {
+                if self.title.is_none() {
+                    let saves = std::env::current_dir().unwrap_or_default().join("saves");
+                    self.title = Some(horizon_client::title::Title::new(saves, &self.options.resources));
+                }
+                log::info!("Horizon: opening requested startup page: {:?}", target_page);
+                self.open_options_at(true, target_page);
+            }
+        }
+    }
     pub(super) fn open_options_at(&mut self, from_title: bool, page: Page) {
         // Gameplay keys must not stay held behind the options screen, where
         // bindings can also change before the physical key is released.
